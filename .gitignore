@@ -1,6 +1,7 @@
 *.o
 sockfun
-brent
+solver/brent
+solver/signmessage
 .gdb_history
 .vscode
 solver/sage/*.py
