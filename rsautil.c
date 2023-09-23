@@ -150,6 +150,11 @@ int validate_challenge(session_t *sess,
     BN_set_word(e, RSA_EXPONENT);
     RSA_set0_key(rsa, n, e, NULL);
 
+    printf("[+] Public key modulus for validation:\n");
+    char * n_hex = BN_bn2hex(n);
+    printf("N = %s\n", n_hex);
+    OPENSSL_free(n_hex);
+
     // Verify the signature
     int res = RSA_verify(NID_sha256, challenge, challenge_len, response, response_len, rsa);
     printf("Verified = %d\n", res);

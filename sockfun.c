@@ -178,7 +178,7 @@ monitor:
         for (int i = 0; i < sess->maxfds; i++) {
             int sd = client_sockets[i];
             if (FD_ISSET(sd, &sess->readfds)) {
-                printf("[+] Client fd=%d ready for read\n", sd);
+                // printf("[+] Client fd=%d ready for read\n", sd);
                 int valread = read(sd, buffer, BUFFER_SIZE);
                 if (valread > 0) {
                     send(sd, buffer, valread, 0);
@@ -276,7 +276,7 @@ void *control_thread(void *arg) {
                 // dprintf(new_socket, "TODO: Implement authentication\n");
                 unsigned char challenge[32];
                 generate_challenge(challenge, sizeof(challenge));
-                dprintf(new_socket, "Challenge: \n");
+                dprintf(new_socket, "Challenge: ");
                 for (int i = 0; i < sizeof(challenge); i++) {
                     dprintf(new_socket, "%02x", challenge[i]);
                 }
@@ -285,12 +285,11 @@ void *control_thread(void *arg) {
                 // response is an RSA signature of the challenge
                 unsigned char response[KEY_SIZE/8];
                 int resp_len = read(new_socket, buffer, BUFFER_SIZE);
-                if (resp_len < 2*sizeof(response)) {
-                    dprintf(new_socket, "Authentication failed: response len (%d) is too short.\n", resp_len);
-                    break;
-                }
                 // Read the response as a hex string
-                for (int i = 0; i < sizeof(response); i++) {
+                for (int i = 0; i < sizeof(response) && i < resp_len; i++) {
+                    if (buffer[2*i] == '\n' || buffer[2*i+1] == '\n') {
+                        break;
+                    }
                     char byte[3] = {buffer[2*i], buffer[2*i+1], 0};
                     response[i] = strtol(byte, NULL, 16);
                 }

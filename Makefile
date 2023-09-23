@@ -5,7 +5,7 @@ LDFLAGS ?= -g
 CFLAGS += -g -pthread -std=c11
 LIBS ?= -lssl -lcrypto -lpthread
 
-all: sockfun solver/brent
+all: sockfun solver/brent solver/signmessage
 
 sockfun.o: sockfun.c sockfun.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -21,6 +21,9 @@ sockfun: sockfun.o rsautil.o base64.o
 
 solver/brent: solver/brent.c
 	$(CC) -g -o $@ $< -lgmp
+
+solver/signmessage: solver/signmessage.c
+	$(CC) -g -o $@ $< -lcrypto
 
 clean:
 	rm -f sockfun brent *.o
