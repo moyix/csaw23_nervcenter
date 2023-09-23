@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <sys/sendfile.h>
 
 #define BUFFER_SIZE 1024
 #define CONTROL_PORT 2000
@@ -70,6 +71,25 @@ void dump_fdset(const char *name, fd_set *fds) {
         printf("%lu, ", fds->__fds_bits[i]);
     }
     printf("]\n");
+}
+
+void sendimg(int fd, const char *path) {
+    char fullpath[256] = {0};
+    snprintf(fullpath, sizeof(fullpath), "img/%s", path);
+    int img = open(path, O_RDONLY);
+    if (img < 0) {
+        perror("open");
+        return;
+    }
+    int nb = 0;
+    do {
+        nb = sendfile(fd, img, NULL, 0x1000);
+        if (nb < 0) {
+            perror("sendfile");
+            break;
+        }
+    } while (nb > 0);
+    close(img);
 }
 
 int open_server_port(int port) {
@@ -271,6 +291,7 @@ int handle_auth(session_t *sess) {
         return 1;
     } else {
         dprintf(new_socket, "Authentication failed.\n");
+        sendimg(new_socket, "asuka_pathetic.txt");
         return 0;
     }
 }
@@ -280,6 +301,7 @@ void *control_thread(void *arg) {
     int new_socket = args->sock;
 
     // Session setup
+    sendimg(new_socket, "nerv_wide.txt");
     dprintf(new_socket, "Welcome to the NERV Magi System\n");
     dprintf(new_socket, "Setting up session...\n");
     session_t *sess = calloc(1, sizeof(session_t));
