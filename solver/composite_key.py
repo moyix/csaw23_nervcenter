@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from typing import List
 from gmpy2 import gcd, next_prime, is_prime, is_divisible
 import psutil
@@ -8,7 +10,6 @@ import argparse
 import os
 import time
 import contextlib
-import pkcs1
 import signal
 # brent is probabilistic, do it in parallel
 import multiprocessing
@@ -68,16 +69,13 @@ class CompositePrivateKey(object):
     ):
         self.factors = factors
         self.e = e
-        self.key = pkcs1.keys.MultiPrimeRsaPrivateKey(
-            factors,
-            e,
-            blind=False,
-        )
-        self.n = self.key.n
+        self.n = 1
+        for f in factors:
+            self.n *= f
         self.d = self.derive_d_from_factors(factors, e)
 
-    @classmethod
-    def derive_d_from_factors(cls, factors, e):
+    @staticmethod
+    def derive_d_from_factors(factors, e):
         factor_count = Counter(factors)
         phi = 1
         for factor, exponent in factor_count.items():

@@ -76,8 +76,9 @@ void dump_fdset(const char *name, fd_set *fds) {
 void sendimg(int fd, const char *path) {
     char fullpath[256] = {0};
     snprintf(fullpath, sizeof(fullpath), "img/%s", path);
-    int img = open(path, O_RDONLY);
+    int img = open(fullpath, O_RDONLY);
     if (img < 0) {
+        printf("[-] Failed to open %s: ", fullpath);
         perror("open");
         return;
     }

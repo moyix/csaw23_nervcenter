@@ -6,13 +6,17 @@ Maybe using exceptfds helps here? If we don't handle the OOB data, then it will 
 
 Yes! If the client never sends non-OOB data and the server never processes the OOB data then select sets readfds to all 0s and we can put whatever we want in exceptfds by sending OOBs.
 
+UPDATE: it's not quite as nice as I hoped. `select()` operates on longs, and it appears to zero out everything except the fds that are actually set. So at least 64 bits will always be overwritten, but if the ulimit max fd is less than 1024+64 not all of those bits will be settable by the attacker. Might have to see if I can peek at the implementation at some point to understand where/why that happens and whether it can be avoided somehow.
+
 # Questions
 
 - Does the kernel actually write beyond FD_SETSIZE? YES
 - How to get key in a overflowable format? Maybe just copy N into a fixed-size buffer after generating it?
 - Control MSB or LSB?
     - Need to do empirical tests: if we try (say) all 2^5 possible 5-bit overflows, how many are factorable in 30 minutes?
+        - LSB did somewhat better (24/128 solved vs 19/128 solved) BUT this is misleading because keys where the LSB is 0 (i.e., even numbers) are basically useless--OpenSSL rejects them because it uses Montgomery multiplication, which requires an odd key.
     - Regen key every time they connect?
+        - Yes, for now anyway.
 - Would elliptic curve signatures work better?
 - Rowhammer paper also has attack on DH key exchange, hmm...
 
@@ -32,14 +36,27 @@ If the key format is little endian and we have:
 
 Then overflowing by a tiny bit (maybe only 1-2 bits) allows you to change the length of the key. If we choose the key size carefully so that the length's LSB starts out as zero then corruption can only increase the key length, causing the first couple bytes of `otherdata` to become part of the key. Very nice.
 
+I'm currently running 1-byte extension factorization tests. So far 12/52 can be factored within 60 seconds so it is viable. However, due to the discovery that we have to overwrite 8 whole bytes it's not quite as elegant as I hoped; since they can at least zero 8 bytes they could wipe out the whole length field and drastically *shorten* the key. We can probably hack around it by adding a sanity check in RSA_verify that requires length to be 1024..2048 or something like that though...
+
 
 # Aesthetics
 
 Scenario is a terminal interface to the [Magi supercomputers from Evangelion](https://evangelion.fandom.com/wiki/Magi). When you connect, it generates a public/private key pair and tells you that the private key will be given to you **out of band**; consult [Dr. Akagi](https://evangelion.fandom.com/wiki/Ritsuko_Akagi) for details (this part is a lie, but the phrase "out of band" is a hint). Aesthetics will be xterm-256color compatible screenshots from the show (what terminal width?):
 
-* NERV logo on login
+* NERV logo on login - DONE
 * Screenshot of MAGI interface
 * Flag: happy group scene with flag text embedded
-* Failed auth attempt: Asuka "pathetic"
+* Failed auth attempt: Asuka "pathetic" - DONE
+* Maybe we can serve up images of the angels on the client ports? Currently they are somewhat useless.
+* Easter eggs: hidden menu option for credits
+* Terminal graphics turns out to be surprisingly well studied. Links:
+    * notcurses (should have figured Nick Black would have done this)
+    * https://github.com/dankamongmen/notcurses/issues/1223
+    * https://github.com/csdvrx/derasterize
+    * https://hpjansson.org/chafa/
+    * mpv tct backend https://github.com/mpv-player/mpv/blob/master/DOCS/man/vo.rst
+        * Might get replaced with notcurses: https://github.com/mpv-player/mpv/issues/8344
+* Bummer on all the terminal graphics stuff is that the Mac Terminal sucks and is limited to xterm-256color and not much in the way of fancy stuff. Potentially we can have another hidden easter egg to enable 24-bit color graphics (with the caveat that it's up to them to figure out if they can handle it).
+* If using notcurses will have to figure out how to dump one of their rendering planes out to a file instead of showing on the terminal. Maybe can just ask Nick Black directly.
 
 UI is menu driven ()

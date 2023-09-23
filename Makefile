@@ -20,7 +20,7 @@ sockfun: sockfun.o rsautil.o base64.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 solver/brent: solver/brent.c
-	$(CC) -g -o $@ $< -lgmp
+	$(CC) -O3 -g -o $@ $< -lgmp
 
 solver/signmessage: solver/signmessage.c
 	$(CC) -g -o $@ $< -lcrypto
