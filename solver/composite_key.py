@@ -1,17 +1,102 @@
 from typing import List
-from attacks.abstract_attack import AbstractAttack
-from tqdm import tqdm
-from lib.keys_wrapper import PrivateKey, CompositePrivateKey
-from lib.number_theory import gcd, next_prime, primes, is_prime, is_divisible
-from lib.utils import timeout as timeout_ctx
-from lib.utils import rootpath, terminate_proc_tree
+from gmpy2 import gcd, next_prime, is_prime, is_divisible
+import psutil
+import logging
 from collections import Counter
 import subprocess
+import argparse
 import os
 import time
-import math
+import contextlib
+import pkcs1
+import signal
 # brent is probabilistic, do it in parallel
 import multiprocessing
+
+class timeout_ctx(contextlib.ContextDecorator):
+    def __init__(
+        self,
+        seconds,
+        *,
+        timeout_message="Timed out",
+        suppress_timeout_errors=False,
+    ):
+        self.seconds = int(seconds)
+        self.timeout_message = timeout_message
+        self.suppress = bool(suppress_timeout_errors)
+        self.logger = logging.getLogger(__name__)
+
+    def _timeout_handler(self, signum, frame):
+        self.logger.warning("[!] Timeout.")
+        raise TimeoutError(self.timeout_message)
+
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, self._timeout_handler)
+        signal.alarm(self.seconds)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        signal.alarm(0)
+        if self.suppress and exc_type is TimeoutError:
+            return True
+
+def primes_yield(n):
+    p = i = 1
+    while i <= n:
+        p = next_prime(p)
+        yield p
+        i += 1
+
+def primes(n):
+    return list(primes_yield(n))
+
+def rootpath():
+    return os.path.dirname(os.path.realpath(__file__))
+
+def terminate_proc_tree(pid, including_parent=False):
+    parent = psutil.Process(pid)
+    children = parent.children(recursive=True)
+    for child in children:
+        child.kill()
+    if including_parent:
+        parent.kill()
+
+class CompositePrivateKey(object):
+    def __init__(
+        self,
+        factors,
+        e,
+    ):
+        self.factors = factors
+        self.e = e
+        self.key = pkcs1.keys.MultiPrimeRsaPrivateKey(
+            factors,
+            e,
+            blind=False,
+        )
+        self.n = self.key.n
+        self.d = self.derive_d_from_factors(factors, e)
+
+    @classmethod
+    def derive_d_from_factors(cls, factors, e):
+        factor_count = Counter(factors)
+        phi = 1
+        for factor, exponent in factor_count.items():
+            phi *= (factor - 1) * (factor ** (exponent - 1))
+        d = pow(e, -1, phi)
+        return d
+
+    def __repr__(self):
+        return repr(self.key)
+
+    def __str__(self):
+        return (
+            "CompositePrivateKey {\n" +
+            f" primes: [" + ", ".join(str(f) for f in self.factors) + "],\n" +
+            f" e: {self.e},\n" +
+            f" d: {self.d},\n" +
+            f" n: {self.n},\n" +
+            "}"
+        )
 
 def brent_parallel(n, event: multiprocessing.Event, results: multiprocessing.Queue):
     res = subprocess.check_output(['/home/moyix/git/RsaCtfTool/brent', str(n)], text=True)
@@ -21,24 +106,17 @@ def brent_parallel(n, event: multiprocessing.Event, results: multiprocessing.Que
     results.put(res)
     event.set()
 
-class Attack(AbstractAttack):
-    def __init__(self, timeout=60, ecmdigits=25):
-        super().__init__(timeout)
-        self.speed = AbstractAttack.speed_enum["slow"]
-        self.required_binaries = ["sage"] # Needed for ECM
+class CompositeAttack:
+    def __init__(self, timeout=60, ecmdigits=25, debug=False):
         self.ecmdigits = ecmdigits
         self.processes : List[multiprocessing.Process] = []
-
-    # Used only for small n (e.g. composites returned by brent)
-    def simple_trial_division(self, n):
-        factors = []
-        for p in primes(int(math.sqrt(n)) + 1):
-            if p > n:
-                break
-            while is_divisible(n, p):
-                factors.append(p)
-                n //= p
-        return factors
+        self.timeout = timeout
+        logfmt = '%(asctime)s %(levelname)-8s %(message)s'
+        if debug:
+            logging.basicConfig(level=logging.DEBUG, format=logfmt)
+        else:
+            logging.basicConfig(level=logging.INFO, format=logfmt)
+        self.logger = logging.getLogger(__name__)
 
     def sage_factor(self, n):
         try:
@@ -46,7 +124,7 @@ class Attack(AbstractAttack):
                 subprocess.check_output(
                     [
                         "sage",
-                        "%s/sage/factor.sage" % rootpath,
+                        "%s/sage/factor.sage" % rootpath(),
                         str(n),
                     ],
                     timeout=self.timeout,
@@ -61,7 +139,7 @@ class Attack(AbstractAttack):
             return None
 
     def ecm_attack(self, n):
-        path_to_sage_interface = "%s/sage/ecm.sage" % rootpath
+        path_to_sage_interface = "%s/sage/ecm.sage" % rootpath()
         sage_find_factor_n = str(n)
 
         try:
@@ -156,31 +234,33 @@ class Attack(AbstractAttack):
         return brent_results
 
     def derive_d_from_factors(self, factors, e):
-        factor_count = Counter(factors)
-        phi = 1
-        for factor, exponent in factor_count.items():
-            phi *= (factor - 1) * (factor ** (exponent - 1))
-        d = pow(e, -1, phi)
-        return d
+        key = CompositePrivateKey(factors, e)
+        return key.d
 
-    def attack(self, publickey, cipher=[], progress=True):
+    def attack(self, n, e):
         """Bitflip key factorization attack"""
-        factors = self.factor_composite(publickey.n)
-        self.logger.info(f"[*] Found factors: {factors}")
+        with timeout_ctx(self.timeout):
+            try:
+                factors = self.factor_composite(n)
+                self.logger.info(f"[*] Found factors: {factors}")
 
-        if factors is not None:
-            d = self.derive_d_from_factors(factors, publickey.e)
-            result = self.test_decryption(publickey.n, publickey.e, d)
-            if result:
-                self.logger.info(f"[*] SUCCESS: Found private key: {d}")
-            else:
-                self.logger.info(f"[-] FAILED: test decryption failed with: {d}")
-            priv_key = CompositePrivateKey(
-                factors,
-                publickey.e,
-            )
-            return priv_key, None
-        return None, None
+                if factors is not None:
+                    d = self.derive_d_from_factors(factors, e)
+                    result = self.test_decryption(n, e, d)
+                    if result:
+                        self.logger.info(f"[*] SUCCESS: Found private key: {d}")
+                    else:
+                        self.logger.info(f"[-] FAILED: test decryption failed with: {d}")
+                    priv_key = CompositePrivateKey(
+                        factors,
+                        e,
+                    )
+                    return priv_key
+                else:
+                    self.logger.info(f"[-] Failed to factorize {n}")
+                    return None
+            except TimeoutError:
+                self.logger.info(f"[-] Timeout reached")
 
     def stage1(self, current_n):
         """Try small factors. Returns (done?, factors, current_n)"""
@@ -371,3 +451,19 @@ class Attack(AbstractAttack):
             p = self.processes.pop()
             if p.is_alive():
                 p.kill()
+
+def main():
+    parser = argparse.ArgumentParser(description='RSA composite key attack')
+    parser.add_argument('e', type=int, help='Public exponent')
+    parser.add_argument('n', type=int, help='Public modulus')
+    parser.add_argument('-t', '--timeout', type=int, default=60, help='Timeout for factorization attempts')
+    parser.add_argument('-d', '--debug', action='store_true', help='Enable debug logging')
+    args = parser.parse_args()
+
+    attack = CompositeAttack(timeout=args.timeout, debug=args.debug)
+    key = attack.attack(args.n, args.e)
+    if key:
+        print(f"[*] Found key: {key}")
+
+if __name__ == '__main__':
+    main()

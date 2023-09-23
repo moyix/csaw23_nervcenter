@@ -6,14 +6,10 @@ import io
 import argparse
 import random
 
-sys.path.append('/home/moyix/git/RsaCtfTool')
-from lib.keys_wrapper import generate_keys_from_p_q_e_n
-
 def parse_key(ssh_pubkey):
     keyline = ssh_pubkey.strip().split()
     keytpe_s, encoded_key, comment = keyline
-    print(f"Key type: {keytpe_s}, comment: {comment} encoded_key len {len(encoded_key)}", file=sys.stderr)
-    print(repr(encoded_key), file=sys.stderr)
+    # print(f"Key type: {keytpe_s}, comment: {comment} encoded_key len {len(encoded_key)}", file=sys.stderr)
     ssh_pubkey = io.BytesIO(base64.b64decode(encoded_key))
 
     # key type
@@ -44,9 +40,7 @@ def main():
     key_type, exponent, modulus = parse_key(open(args.ssh_pubkey).read())
     key_bits = modulus.bit_length()
     if args.no_mutate:
-        print(f"{key_type} {key_bits}-bit key with public exponent {exponent}")
-        print("N = ", end='')
-        print(f"{modulus:#x}")
+        print(exponent, modulus)
         return
 
     if not args.random:
@@ -57,21 +51,15 @@ def main():
             mod_bin = mod_fmt.format(modulus)
             hexdigits = key_bits // 4
             lsbstr = 'lsb' if args.lsb else 'msb'
-            fname = f"{args.output_prefix}_{mut_bin}_{lsbstr}.pem"
+            fname = f"{args.output_prefix}_{mut_bin}_{lsbstr}.txt"
             if args.lsb:
                 mut_modulus = int(mod_bin[:-args.k] + mut_bin, 2)
             else:
                 mut_modulus = int(mut_bin + mod_bin[args.k:], 2)
             print(f"[{mut_bin}] {mut_modulus:0{hexdigits}x}")
-            try:
-                pubkey, privkey = generate_keys_from_p_q_e_n(None, None, exponent, mut_modulus)
-            except ValueError as e:
-                print(f"Failed to generate PEM for mutation {mut:#x}: {e}, saving as plain", file=sys.stderr)
-                with open(fname, 'w') as f:
-                    print(exponent, mut_modulus, file=f)
-                continue
-            with open(fname, 'wb') as f:
-                f.write(pubkey)
+
+            with open(fname, 'w') as f:
+                print(exponent, mut_modulus, file=f)
     else:
         mut = modulus
         which_bits = []
@@ -81,15 +69,9 @@ def main():
             which_bits.append(which_bit)
         which_bits.sort()
         which_str = ','.join(map(str, which_bits))
-        fname = f"{args.output_prefix}_flip_{which_str}.pem"
-        try:
-            pubkey, privkey = generate_keys_from_p_q_e_n(None, None, exponent, mut)
-            with open(fname, 'w') as f:
-                print(pubkey.decode(), file=f)
-        except ValueError as e:
-            print(f"Failed to generate key for mutation {mut:#x}: {e}, saving as plain", file=sys.stderr)
-            with open(fname, 'w') as f:
-                print(exponent, mut, file=f)
+        fname = f"{args.output_prefix}_{which_str}_lsb.txt"
+        with open(fname, 'w') as f:
+            print(exponent, mut, file=f)
 
 if __name__ == '__main__':
     main()
