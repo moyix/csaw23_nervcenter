@@ -58,10 +58,10 @@ unsigned long increase_fd_limit(unsigned long maxfiles) {
 void dump_key(session_t *s) {
     // hexdump the buffer
     printf("s->pubkey = ");
-    for (int i = 0; i < sizeof(s->pubkey); i++) {
+    for (int i = 0; i < 16; i++) {
         printf("%02x", s->pubkey[i]);
     }
-    printf("\n");
+    printf(" [...]\n");
 }
 
 void dump_fdset(const char *name, fd_set *fds) {
@@ -104,12 +104,16 @@ int open_server_port(int port) {
         exit(EXIT_FAILURE);
     }
 
-    printf("[+] Listening on port %d\n", port);
+    printf("[+] Listening on port %d, fd=%d\n", port, server_fd);
     return server_fd;
 }
 typedef struct {
     session_t *sess;
     _Atomic int should_exit;
+    // Pause condition signaling
+    int should_pause;
+    pthread_cond_t pause_cond;
+    pthread_mutex_t pause_mutex;
 } client_thread_args;
 
 // Thread to handle client connections
@@ -146,6 +150,17 @@ void *client_thread(void *arg) {
         if (activity == 0) {
             goto exit_check;
         }
+
+        // Does the control thread want us to pause?
+        int did_pause = 0;
+        pthread_mutex_lock(&args->pause_mutex);
+        while (args->should_pause) {
+            printf("[-] Client thread pausing\n");
+            did_pause = 1;
+            pthread_cond_wait(&args->pause_cond, &args->pause_mutex);
+        }
+        pthread_mutex_unlock(&args->pause_mutex);
+        if (did_pause) printf("[+] Client thread resuming\n");
 
         // If the activity is on the server socket it means we have a new connection
         // Accept it
@@ -198,9 +213,6 @@ monitor:
                 }
             }
         }
-        // dump_fdset("readfds", &sess.readfds);
-        // dump_fdset("exceptfds", &sess.exceptfds);
-        // dump_key(sess);
 exit_check:
         // Check if we should exit
         if (atomic_load(&args->should_exit)) {
@@ -223,6 +235,46 @@ typedef struct {
     unsigned long maxfiles;
 } control_thread_args;
 
+int handle_auth(session_t *sess) {
+    char buffer[BUFFER_SIZE+1] = {0};
+    int new_socket = sess->control_fd;
+
+    unsigned char challenge[32];
+    generate_challenge(challenge, sizeof(challenge));
+    dprintf(new_socket, "Challenge: ");
+    for (int i = 0; i < sizeof(challenge); i++) {
+        dprintf(new_socket, "%02x", challenge[i]);
+    }
+    dprintf(new_socket, "\n");
+    dprintf(new_socket, "Response: ");
+    // response is an RSA signature of the challenge
+    unsigned char response[KEY_SIZE/8];
+    int resp_len = read(new_socket, buffer, BUFFER_SIZE);
+    buffer[resp_len] = 0;
+    // Read the response as a hex string
+    int i;
+    for (i = 0; i < sizeof(response) && i < resp_len; i++) {
+        if (buffer[2*i] == '\n' || buffer[2*i+1] == '\n') {
+            break;
+        }
+        char byte[3] = {buffer[2*i], buffer[2*i+1], 0};
+        response[i] = strtol(byte, NULL, 16);
+    }
+    int resp_len_bytes = i;
+    printf("Received response (%d bytes): ", resp_len_bytes);
+    for (int i = 0; i < resp_len_bytes; i++) {
+        printf("%02x", response[i]);
+    }
+    printf("\n");
+    if (validate_challenge(sess, challenge, sizeof(challenge), response, resp_len_bytes)) {
+        dprintf(new_socket, "Authentication successful!\n");
+        return 1;
+    } else {
+        dprintf(new_socket, "Authentication failed.\n");
+        return 0;
+    }
+}
+
 void *control_thread(void *arg) {
     control_thread_args *args = (control_thread_args *)arg;
     int new_socket = args->sock;
@@ -231,6 +283,7 @@ void *control_thread(void *arg) {
     dprintf(new_socket, "Welcome to the NERV Magi System\n");
     dprintf(new_socket, "Setting up session...\n");
     session_t *sess = calloc(1, sizeof(session_t));
+    sess->control_fd = new_socket;
     // Generate a new RSA key
     rsa_setup(sess);
     // Send the public key to the client
@@ -256,6 +309,9 @@ void *control_thread(void *arg) {
     client_thread_args *client_args = calloc(1, sizeof(client_thread_args));
     client_args->sess = sess;
     client_args->should_exit = 0;
+    client_args->should_pause = 0;
+    pthread_cond_init(&client_args->pause_cond, NULL);
+    pthread_mutex_init(&client_args->pause_mutex, NULL);
     pthread_create(&thread, NULL, client_thread, client_args);
 
     // Server loop
@@ -263,54 +319,48 @@ void *control_thread(void *arg) {
         dprintf(new_socket, "Main menu:\n");
         dprintf(new_socket, "1. Authenticate\n");
         dprintf(new_socket, "2. Print public key\n");
-        dprintf(new_socket, "3. Exit\n");
+        dprintf(new_socket, "3. Pause client thread\n");
+        dprintf(new_socket, "4. Resume client thread\n");
+        dprintf(new_socket, "5. Exit\n");
         dprintf(new_socket, "Enter your choice: ");
-        char buffer[BUFFER_SIZE] = {0};
+        char buffer[BUFFER_SIZE+1] = {0};
         int rbytes = read(new_socket, buffer, BUFFER_SIZE);
         if (rbytes <= 0) {
             printf("[-] Client disconnected\n");
             goto server_done;
         }
-        switch (buffer[0]) {
-            case '1': {
-                // dprintf(new_socket, "TODO: Implement authentication\n");
-                unsigned char challenge[32];
-                generate_challenge(challenge, sizeof(challenge));
-                dprintf(new_socket, "Challenge: ");
-                for (int i = 0; i < sizeof(challenge); i++) {
-                    dprintf(new_socket, "%02x", challenge[i]);
-                }
-                dprintf(new_socket, "\n");
-                dprintf(new_socket, "Response: ");
-                // response is an RSA signature of the challenge
-                unsigned char response[KEY_SIZE/8];
-                int resp_len = read(new_socket, buffer, BUFFER_SIZE);
-                // Read the response as a hex string
-                for (int i = 0; i < sizeof(response) && i < resp_len; i++) {
-                    if (buffer[2*i] == '\n' || buffer[2*i+1] == '\n') {
-                        break;
-                    }
-                    char byte[3] = {buffer[2*i], buffer[2*i+1], 0};
-                    response[i] = strtol(byte, NULL, 16);
-                }
-                printf("Received response: ");
-                for (int i = 0; i < sizeof(response); i++) {
-                    printf("%02x", response[i]);
-                }
-                printf("\n");
-                if (validate_challenge(sess, challenge, sizeof(challenge), response, sizeof(response))) {
-                    dprintf(new_socket, "Authentication successful!\n");
-                } else {
-                    dprintf(new_socket, "Authentication failed.\n");
-                }
+        buffer[rbytes] = 0;
+        // Parse the choice
+        char *endptr;
+        unsigned long choice = strtoul(buffer, &endptr, 10);
+        if (endptr == buffer) {
+            dprintf(new_socket, "Invalid choice\n");
+            continue;
+        }
+        switch (choice) {
+            case 1: {
+                sess->authenticated = handle_auth(sess);
                 break;
             }
-            case '2':
+            case 2:
                 pubkey = dump_pubkey_ssh(RSA_EXPONENT, sess->pubkey, sizeof(sess->pubkey), "newuser@nerv");
                 dprintf(new_socket, "Your public key is:\n%s\n", pubkey);
                 free(pubkey);
                 break;
-            case '3':
+            case 3:
+                pthread_mutex_lock(&client_args->pause_mutex);
+                client_args->should_pause = 1;
+                pthread_mutex_unlock(&client_args->pause_mutex);
+                dprintf(new_socket, "Client thread paused\n");
+                break;
+            case 4:
+                pthread_mutex_lock(&client_args->pause_mutex);
+                client_args->should_pause = 0;
+                pthread_cond_signal(&client_args->pause_cond);
+                pthread_mutex_unlock(&client_args->pause_mutex);
+                dprintf(new_socket, "Client thread resumed\n");
+                break;
+            case 5:
                 dprintf(new_socket, "Goodbye!\n");
                 goto server_done;
                 break;
@@ -321,6 +371,12 @@ void *control_thread(void *arg) {
     }
 server_done:
     close(new_socket);
+    // Unpause the client thread if it's paused
+    pthread_mutex_lock(&client_args->pause_mutex);
+    client_args->should_pause = 0;
+    pthread_cond_signal(&client_args->pause_cond);
+    pthread_mutex_unlock(&client_args->pause_mutex);
+    // Tell the client thread to exit
     atomic_store(&client_args->should_exit, 1);
     pthread_join(thread, NULL);
     free(sess);

@@ -7,6 +7,7 @@
 typedef struct {
     int server_fd;
     int control_fd;
+    int authenticated;
     unsigned long maxfds;
     int nfds;
     fd_set readfds;

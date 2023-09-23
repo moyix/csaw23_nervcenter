@@ -26,4 +26,4 @@ solver/signmessage: solver/signmessage.c
 	$(CC) -g -o $@ $< -lcrypto
 
 clean:
-	rm -f sockfun brent *.o
+	rm -f sockfun solver/signmessage solver/brent *.o
