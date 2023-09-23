@@ -5,7 +5,7 @@ LDFLAGS ?= -g
 CFLAGS += -g -pthread -std=c11
 LIBS ?= -lssl -lcrypto -lpthread
 
-all: sockfun brent
+all: sockfun solver/brent
 
 sockfun.o: sockfun.c sockfun.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -19,7 +19,7 @@ base64.o: base64.c base64.h
 sockfun: sockfun.o rsautil.o base64.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-brent: brent.c
+solver/brent: solver/brent.c
 	$(CC) -g -o $@ $< -lgmp
 
 clean:

@@ -99,7 +99,7 @@ class CompositePrivateKey(object):
         )
 
 def brent_parallel(n, event: multiprocessing.Event, results: multiprocessing.Queue):
-    res = subprocess.check_output(['/home/moyix/git/RsaCtfTool/brent', str(n)], text=True)
+    res = subprocess.check_output(['%s/brent' % rootpath(), str(n)], text=True)
     res = res.strip()
     if res:
         res = int(res)
