@@ -10,6 +10,10 @@ UPDATE: it's not quite as nice as I hoped. `select()` operates on longs, and it 
 
 # Questions
 
+- IMPORTANT: What is a great name for this challenge? Ideally a pun that combines:
+    - Sockets/bitwise operations
+    - RSA or cryptography
+    - Evangelion
 - Does the kernel actually write beyond FD_SETSIZE? YES
 - How to get key in a overflowable format? Maybe just copy N into a fixed-size buffer after generating it?
 - Control MSB or LSB?
@@ -41,7 +45,7 @@ I'm currently running 1-byte extension factorization tests. So far 12/52 can be 
 
 # Aesthetics
 
-Scenario is a terminal interface to the [Magi supercomputers from Evangelion](https://evangelion.fandom.com/wiki/Magi). When you connect, it generates a public/private key pair and tells you that the private key will be given to you **out of band**; consult [Dr. Akagi](https://evangelion.fandom.com/wiki/Ritsuko_Akagi) for details (this part is a lie, but the phrase "out of band" is a hint). Aesthetics will be xterm-256color compatible screenshots from the show (what terminal width?):
+Scenario is a terminal interface to the [Magi supercomputers from Evangelion](https://evangelion.fandom.com/wiki/Magi). When you connect, it generates a public/private key pair and tells you that the private key will be given to you **out of band**; consult [Dr. Akagi](https://evangelion.fandom.com/wiki/Ritsuko_Akagi) for details (this part is a lie, but the phrase "out of band" is a hint). Aesthetics will be xterm-256color compatible screenshots from the show (what terminal width? Say 100 chars):
 
 * NERV logo on login - DONE
 * Screenshot of MAGI interface
@@ -59,4 +63,13 @@ Scenario is a terminal interface to the [Magi supercomputers from Evangelion](ht
 * Bummer on all the terminal graphics stuff is that the Mac Terminal sucks and is limited to xterm-256color and not much in the way of fancy stuff. Potentially we can have another hidden easter egg to enable 24-bit color graphics (with the caveat that it's up to them to figure out if they can handle it).
 * If using notcurses will have to figure out how to dump one of their rendering planes out to a file instead of showing on the terminal. Maybe can just ask Nick Black directly.
 
-UI is menu driven ()
+# Stray Thoughts
+
+- Inspirations:
+    - This QEMU bug: https://lists.nongnu.org/archive/html/qemu-devel/2013-01/msg04655.html which I also ran into when doing Malrec. I still wonder if it is exploitable from within a VM, at least if slirp is enabled?
+        - https://news.ycombinator.com/item?id=27216242 => https://0pointer.net/blog/file-descriptor-limits.html
+        - Some fun previous CVEs:
+            - https://arthurdejong.org/nss-pam-ldapd/CVE-2013-0288 (nss-pam-ldapd)
+            - https://www.openwall.com/lists/oss-security/2015/02/06/4 (fcgi)
+            -
+    - Flip feng shui paper

