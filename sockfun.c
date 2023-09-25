@@ -147,6 +147,7 @@ void *client_thread(void *arg) {
     // Main loop: accept connections, add them to the set, and select
     while(1) {
         FD_ZERO(&sess->readfds);
+        FD_ZERO(&sess->exceptfds);
         FD_SET(sess->server_fd, &sess->readfds);
         sess->nfds = sess->server_fd;
 
