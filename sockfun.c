@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <stdatomic.h>
 #include <sys/sendfile.h>
+#include <execinfo.h>
 
 #define BUFFER_SIZE 1024
 #define CONTROL_PORT 2000
@@ -26,6 +27,9 @@
 
 #include "sockfun.h"
 #include "rsautil.h"
+
+// Lock for getting the client port
+pthread_mutex_t client_port_lock = PTHREAD_MUTEX_INITIALIZER;
 
 unsigned long increase_fd_limit(unsigned long maxfiles) {
     // Try to increase open file limit
@@ -97,16 +101,16 @@ int open_server_port(int port) {
     int server_fd;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket failed");
-        exit(EXIT_FAILURE);
+        return -2;
     }
 
     // Allow the socket to be reused
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
         perror("setsockopt");
-        exit(EXIT_FAILURE);
+        return -2;
     }
 
     // Set up the server details
@@ -122,7 +126,7 @@ int open_server_port(int port) {
     }
     if (listen(server_fd, 3) < 0) {
         perror("listen failed");
-        exit(EXIT_FAILURE);
+        return -2;
     }
 
     printf("[+] Listening on port %d, fd=%d\n", port, server_fd);
@@ -319,13 +323,20 @@ void *control_thread(void *arg) {
     sess->maxfds = args->maxfiles;
 
     // Find a free port for the client to connect to
+    pthread_mutex_lock(&client_port_lock);
     int client_port = CLIENT_PORT_BASE;
     int client_fd = -1;
-    while (-1 == (client_fd = open_server_port(client_port))) {
+    while ((client_fd = open_server_port(client_port)) < 0) {
+        if (client_fd == -2) {
+            printf("[-] Failed to open client port %d\n", client_port);
+            pthread_mutex_unlock(&client_port_lock);
+            pthread_exit(NULL);
+        }
         // Keep trying until we find a free port
         client_port++;
     }
     sess->server_fd = client_fd;
+    pthread_mutex_unlock(&client_port_lock);
     dprintf(new_socket, "Your very own port is %d\n", client_port);
 
     // Spawn a thread to handle the client connections
@@ -431,7 +442,7 @@ int main() {
         int new_socket;
         if ((new_socket = accept(control_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
             perror("accept");
-            exit(EXIT_FAILURE);
+            pthread_exit(NULL);
         }
         printf("[+] New control connection from %s:%d assigned to fd=%d\n", inet_ntoa(address.sin_addr), ntohs(address.sin_port), new_socket);
 
