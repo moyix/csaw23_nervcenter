@@ -2,8 +2,10 @@ ifeq ($(origin CC),default)
 CC  = clang
 endif
 LDFLAGS ?= -ggdb -pthread
-CFLAGS += -ggdb -pthread -std=c11
+CFLAGS += -ggdb -pthread -std=c11 -D_GNU_SOURCE
 LIBS ?= -lssl -lcrypto -lpthread -lgcc_s
+
+.PHONY: all clean run
 
 all: sockfun solver/brent solver/signmessage
 
@@ -27,3 +29,6 @@ solver/signmessage: solver/signmessage.c
 
 clean:
 	rm -f sockfun solver/signmessage solver/brent *.o
+
+run: sockfun
+	./sockfun

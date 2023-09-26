@@ -16,6 +16,7 @@
 #include <stdatomic.h>
 #include <sys/sendfile.h>
 #include <execinfo.h>
+#include <dirent.h>
 
 #define BUFFER_SIZE 1024
 #define CONTROL_PORT 2000
@@ -69,32 +70,135 @@ void dump_key(session_t *s) {
     printf(" [...]\n");
 }
 
-void dump_fdset(const char *name, fd_set *fds) {
-    printf("fd_set[%9s] = [", name);
-    for (int i = 0; i < sizeof(fds->__fds_bits) / sizeof(fds->__fds_bits[0]); i++) {
-        printf("%lu, ", fds->__fds_bits[i]);
+char *angel_list[32];
+int angel_list_len = 0;
+void setup_angel_list() {
+    DIR *d;
+    struct dirent *dir;
+    d = opendir("img/angels");
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            if (dir->d_type != DT_REG) continue;
+            // Strip off the .txt extension
+            char *ext = strstr(dir->d_name, ".txt");
+            if (ext) *ext = 0;
+            printf("[+] Adding angel: %s\n", dir->d_name);
+            angel_list[angel_list_len++] = strdup(dir->d_name);
+        }
+        closedir(d);
     }
-    printf("]\n");
+    printf("[+] Angel list length: %d\n", angel_list_len);
 }
 
+// Small delay when sending images to let them scroll by
+#define IMG_DELAY 15000
 void sendimg(int fd, const char *path) {
+    printf("[+] Sending image %s\n", path);
     char fullpath[256] = {0};
     snprintf(fullpath, sizeof(fullpath), "img/%s", path);
-    int img = open(fullpath, O_RDONLY);
-    if (img < 0) {
+    FILE *img = fopen(fullpath, "r");
+    if (!img) {
         printf("[-] Failed to open %s: ", fullpath);
-        perror("open");
+        perror("fopen");
         return;
     }
-    int nb = 0;
-    do {
-        nb = sendfile(fd, img, NULL, 0x1000);
-        if (nb < 0) {
-            perror("sendfile");
+    // Read the file line by line with getline and send it
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t nread;
+    while ((nread = getline(&line, &len, img)) != -1) {
+        // printf("Sending line: %s", line);
+        dprintf(fd, "%s", line);
+        // Wait .015 seconds between lines
+        usleep(IMG_DELAY);
+    }
+    fclose(img);
+}
+
+void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, int *client_sockets) {
+    printf("[+] Received %ld bytes from fd=%d: %s\n", buflen, fd, buffer);
+    // Scan for newline
+    for (int i = 0; i < buflen; i++) {
+        if (buffer[i] == '\n') {
+            buffer[i] = 0;
+            buflen = i;
             break;
         }
-    } while (nb > 0);
-    close(img);
+    }
+    if (strncmp(buffer, "LIST", 4) == 0) {
+        // Send the list of angels
+        for (int i = 0; i < angel_list_len; i++) {
+            dprintf(fd, "%s\n", angel_list[i]);
+        }
+    }
+    else if (strncmp(buffer, "EXAMINE", 7) == 0) {
+        printf("[+] Examine command received: %s\n", buffer);
+        char *ptr = &buffer[7];
+        char *end = &buffer[buflen];
+        // Skip whitespace
+        while (ptr < end && (*ptr == ' ' || *ptr == '\t')) ptr++;
+        if (ptr == end) {
+            dprintf(fd, "Usage: EXAMINE <angel>\n");
+            return;
+        }
+        char *name = ptr;
+        printf("[+] Examine angel: %s\n", name);
+        // Find the angel
+        for (int i = 0; i < angel_list_len; i++) {
+            if (strcmp(angel_list[i], name) == 0) {
+                // Found it
+                char angelpath[256] = {0};
+                snprintf(angelpath, sizeof(angelpath), "angels/%s.txt", name);
+                sendimg(fd, angelpath);
+                return;
+            }
+        }
+        dprintf(fd, "Unknown angel '%s'\n", name);
+    }
+    else if (strncmp(buffer, "EMERGENCY", 9) == 0) {
+        // Show pending urgent data across all connections
+        dprintf(fd, "Pending urgent data reported by our angel sensors:\n{\n");
+        for (int i = 0; i <= sess->maxfds; i++) {
+            int cfd = client_sockets[i];
+            if (cfd == 0) continue;
+            if (FD_ISSET(cfd, &sess->exceptfds)) {
+                unsigned char oob = 0;
+                ssize_t r = recv(cfd, &oob, 1, MSG_OOB);
+                if (r < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINVAL) {
+                        dprintf(fd, "No urgent data available\n");
+                    } else {
+                        perror("recv");
+                    }
+                }
+                else {
+                    dprintf(fd, "  fd=%04d: '%c',\n", cfd, oob);
+                }
+            }
+        }
+        dprintf(fd, "}\n");
+    }
+    else if (strncmp(buffer, "QUIT", 4) == 0) {
+        dprintf(fd, "Goodbye!\n");
+        close(fd);
+        client_sockets[fd] = 0;
+    }
+    else if (strncmp(buffer, "HELP", 4) == 0) {
+        dprintf(fd, "Available commands:\n");
+        dprintf(fd, "LIST\n");
+        dprintf(fd, "  List known angels.\n");
+        dprintf(fd, "EXAMINE <angel>\n");
+        dprintf(fd, "  Examine an angel.\n");
+        dprintf(fd, "EMERGENCY\n");
+        dprintf(fd, "  Examine any urgent data.\n");
+        dprintf(fd, "HELP\n");
+        dprintf(fd, "  Show this help message.\n");
+        dprintf(fd, "QUIT\n");
+        dprintf(fd, "  Disconnect this client.\n");
+    }
+    else {
+        dprintf(fd, "Unknown command\n");
+    }
 }
 
 int open_server_port(int port) {
@@ -143,7 +247,7 @@ typedef struct {
 
 // Thread to handle client connections
 void *client_thread(void *arg) {
-    char buffer[BUFFER_SIZE] = {0};
+    char buffer[BUFFER_SIZE+1] = {0};
     client_thread_args *args = (client_thread_args *)arg;
     session_t *sess = args->sess;
     int *client_sockets = calloc(sess->maxfds, sizeof(int));
@@ -203,6 +307,11 @@ void *client_thread(void *arg) {
             int flags = fcntl(new_socket, F_GETFL, 0);
             fcntl(new_socket, F_SETFL, flags | O_NONBLOCK);
 
+            // Send the initial prompt string
+            dprintf(new_socket, "Welcome to Emergency Angel Response interface.\n");
+            dprintf(new_socket, "Type HELP for a list of commands.\n");
+            dprintf(new_socket, "> ");
+
             // Find a free slot in the client_sockets array
             for (i = 0; i < sess->maxfds; i++) {
                 if (client_sockets[i] == 0) {
@@ -218,11 +327,14 @@ void *client_thread(void *arg) {
 monitor:
         for (int i = 0; i < sess->maxfds; i++) {
             int sd = client_sockets[i];
+            if (sd == 0) continue;
             if (FD_ISSET(sd, &sess->readfds)) {
                 // printf("[+] Client fd=%d ready for read\n", sd);
-                int valread = read(sd, buffer, BUFFER_SIZE);
+                ssize_t valread = read(sd, buffer, BUFFER_SIZE);
                 if (valread > 0) {
-                    send(sd, buffer, valread, 0);
+                    buffer[valread] = 0;
+                    handle_client_input(sd, buffer, valread, sess, client_sockets);
+                    dprintf(sd, "> ");
                 }
                 else if (valread == 0) {
                     printf("[-] Client fd=%d disconnected\n", sd);
@@ -337,6 +449,12 @@ void *control_thread(void *arg) {
     }
     sess->server_fd = client_fd;
     pthread_mutex_unlock(&client_port_lock);
+    // Force OOB data to be sent out of band, not inline
+    int opt = 0;
+    if (setsockopt(sess->server_fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof(opt))) {
+        perror("setsockopt");
+        pthread_exit(NULL);
+    }
     dprintf(new_socket, "Your very own port is %d\n", client_port);
 
     // Spawn a thread to handle the client connections
@@ -348,9 +466,13 @@ void *control_thread(void *arg) {
     pthread_cond_init(&client_args->pause_cond, NULL);
     pthread_mutex_init(&client_args->pause_mutex, NULL);
     pthread_create(&thread, NULL, client_thread, client_args);
+    char threadname[16] = {0};
+    snprintf(threadname, sizeof(threadname), "client-%d", client_port);
 
     // Server loop
     while (1) {
+        dprintf(new_socket, "Current authorization level: %s\n",
+                sess->authenticated ? "ADMIN" : "UNPRIVILEGED");
         dprintf(new_socket, "Main menu:\n");
         dprintf(new_socket, "1. Authenticate\n");
         dprintf(new_socket, "2. Print public key\n");
@@ -399,6 +521,8 @@ void *control_thread(void *arg) {
                 dprintf(new_socket, "Goodbye!\n");
                 goto server_done;
                 break;
+            case 31337:
+                dprintf(new_socket, "Easter egg: Credits!\n");
             default:
                 dprintf(new_socket, "Invalid choice\n");
                 break;
@@ -426,6 +550,9 @@ int main() {
     // Set max files
     unsigned long maxfiles = increase_fd_limit(PREFERRED_MAXFILES);
     printf("[+] Max files is %lu\n", maxfiles);
+
+    // Set up the angel list
+    setup_angel_list();
 
     // Ignore SIGPIPE so we don't crash when a client disconnects
     signal(SIGPIPE, SIG_IGN);
