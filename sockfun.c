@@ -90,15 +90,17 @@ void setup_angel_list() {
     printf("[+] Angel list length: %d\n", angel_list_len);
 }
 
+int strptrcmp(const void *a, const void *b) {
+    return strcmp(*(char **)a, *(char **)b);
+}
+
 // Small delay when sending images to let them scroll by
 #define IMG_DELAY 15000
-void sendimg(int fd, const char *path) {
-    printf("[+] Sending image %s\n", path);
-    char fullpath[256] = {0};
-    snprintf(fullpath, sizeof(fullpath), "img/%s", path);
-    FILE *img = fopen(fullpath, "r");
+void sendimg(int fd, const char *path, int delay) {
+    // printf("[+] Sending image %s\n", path);
+    FILE *img = fopen(path, "r");
     if (!img) {
-        printf("[-] Failed to open %s: ", fullpath);
+        fprintf(stderr, "[-] Failed to open %s: ", path);
         perror("fopen");
         return;
     }
@@ -109,10 +111,68 @@ void sendimg(int fd, const char *path) {
     while ((nread = getline(&line, &len, img)) != -1) {
         // printf("Sending line: %s", line);
         dprintf(fd, "%s", line);
-        // Wait .015 seconds between lines
-        usleep(IMG_DELAY);
+        if (delay) usleep(delay);
     }
     fclose(img);
+}
+
+void sendvid(int fd, const char *fullpath, float fps) {
+    // list the files in the directory
+    int n_frames = 0;
+    int capacity = 0;
+    char **framelist = NULL;
+    DIR *d;
+    struct dirent *dir;
+    d = opendir(fullpath);
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            if (dir->d_type != DT_REG) continue;
+            // Skip non-.txt files
+            if (strstr(dir->d_name, ".txt") == NULL) continue;
+            if (n_frames == capacity) {
+                if (capacity == 0)
+                    capacity = 16;
+                else
+                    capacity *= 2;
+                framelist = realloc(framelist, capacity * sizeof(char *));
+            }
+            // Save the name as the full path so we don't have to keep appending it
+            char *name = malloc(strlen(fullpath) + strlen(dir->d_name) + 2);
+            snprintf(name, strlen(fullpath) + strlen(dir->d_name) + 2, "%s/%s", fullpath, dir->d_name);
+            framelist[n_frames++] = name;
+        }
+        closedir(d);
+    }
+    // Sort the frames
+    qsort(framelist, n_frames, sizeof(char *), strptrcmp);
+    // Send clear screen and hide cursor commands
+    dprintf(fd, "\033[H\033[2J\033[3J"); // clear screen
+    dprintf(fd, "\033[?25l");            // hide cursor
+    // Send the frames
+    float frametime = 1.0 / fps;
+    suseconds_t usec = frametime * 1000000;
+    for (int i = 0; i < n_frames; i++) {
+        // Time the call to sendimg to calculate correct delay
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+        sendimg(fd, framelist[i], 0);
+        gettimeofday(&end, NULL);
+        suseconds_t elapsed = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
+        if (elapsed < usec) {
+            usleep(usec - elapsed);
+        }
+    }
+    // Send show cursor command
+    dprintf(fd, "\033[?25h");     // show cursor
+    // Reset the terminal
+    dprintf(fd, "\033c");
+    dprintf(fd, "\033[H\033[2J\033[3J");
+
+    // Free the framelist
+    for (int i = 0; i < n_frames; i++) {
+        free(framelist[i]);
+    }
+    free(framelist);
 }
 
 void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, int *client_sockets) {
@@ -132,6 +192,7 @@ void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, 
         }
     }
     else if (strncmp(buffer, "EXAMINE", 7) == 0) {
+        static _Thread_local char state = 0;
         printf("[+] Examine command received: %s\n", buffer);
         char *ptr = &buffer[7];
         char *end = &buffer[buflen];
@@ -146,10 +207,16 @@ void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, 
         // Find the angel
         for (int i = 0; i < angel_list_len; i++) {
             if (strcmp(angel_list[i], name) == 0) {
+                if (state == 0 && name[0] == 'R') state = 1; else state = 0;
+                if (state == 1 && name[0] == 'S') state = 2; else state = 0;
+                if (state == 2 && name[0] == 'A') state = 3; else state = 0;
+                if (state == 3) {
+                    // TODO: something special?
+                }
                 // Found it
                 char angelpath[256] = {0};
-                snprintf(angelpath, sizeof(angelpath), "angels/%s.txt", name);
-                sendimg(fd, angelpath);
+                snprintf(angelpath, sizeof(angelpath), "img/angels/%s.txt", name);
+                sendimg(fd, angelpath, IMG_DELAY);
                 return;
             }
         }
@@ -409,7 +476,7 @@ int handle_auth(session_t *sess) {
         return 1;
     } else {
         dprintf(new_socket, "Authentication failed.\n");
-        sendimg(new_socket, "asuka_pathetic.txt");
+        sendimg(new_socket, "img/asuka_pathetic.txt", 0);
         return 0;
     }
 }
@@ -419,7 +486,7 @@ void *control_thread(void *arg) {
     int new_socket = args->sock;
 
     // Session setup
-    sendimg(new_socket, "nerv_wide.txt");
+    sendimg(new_socket, "img/nerv_wide.txt", 0);
     dprintf(new_socket, "Welcome to the NERV Magi System\n");
     dprintf(new_socket, "Setting up session...\n");
     session_t *sess = calloc(1, sizeof(session_t));
@@ -522,7 +589,19 @@ void *control_thread(void *arg) {
                 goto server_done;
                 break;
             case 31337:
-                dprintf(new_socket, "Easter egg: Credits!\n");
+                dprintf(new_socket, "\033[H\033[2J\033[3J");
+                dprintf(new_socket, "+------------------------------- Easter egg: Credits! -------------------------------+\n");
+                dprintf(new_socket, "| Please ensure your terminal is at least 100x40 characters and supports 256 colors. |\n");
+                dprintf(new_socket, "| You will also need to use a terminal that supports unicode, and make sure LANG is  |\n");
+                dprintf(new_socket, "|                     set to something sensible like en_US.UTF-8.                    |\n");
+                dprintf(new_socket, "|                                                                                    |\n");
+                dprintf(new_socket, "|      Sorry, no music :) But feel free to sing along to the karaoke subtitles!      |\n");
+                dprintf(new_socket, "|                                                                                    |\n");
+                dprintf(new_socket, "|                    Press enter to continue and enjoy the show...                   |\n");
+                dprintf(new_socket, "+------------------------------------------------------------------------------------+\n");
+                read(new_socket, buffer, BUFFER_SIZE);
+                sendvid(new_socket, "img/credits", 29.98);
+                break;
             default:
                 dprintf(new_socket, "Invalid choice\n");
                 break;

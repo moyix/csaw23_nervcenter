@@ -5,13 +5,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-// inotify
-#include <sys/inotify.h>
-#include <poll.h>
-// for CLOCK_MONOTONIC
-#include <time.h>
-#include <sys/stat.h>
-
 // Silence deprecation warnings since we want to use the RSA primitives
 #define OPENSSL_SUPPRESS_DEPRECATED 1
 #include <openssl/rsa.h>
@@ -73,6 +66,26 @@ int rsa_setup(session_t *s) {
         memcpy(s->pubkey, pubkey, pubkey_len);
     }
     return !failed;
+}
+
+rsa_error_t validate_key(unsigned char *pubkey, unsigned int pubkey_len) {
+    // MSB must not be zero
+    if (pubkey[0] == 0) {
+        return RERR_LEADING_ZERO;
+    }
+    // Key must be odd
+    if (!(pubkey[pubkey_len-1] & 0x01)) {
+        return RERR_EVEN_KEY;
+    }
+    // Key must be at least 1024 bits
+    if (pubkey_len < 128) {
+        return RERR_KEY_TOO_SMALL;
+    }
+    // Key must be at most 2048 bits
+    if (pubkey_len > 256) {
+        return RERR_KEY_TOO_LARGE;
+    }
+    return RERR_OK;
 }
 
 char * dump_pubkey_ssh(int e, unsigned char *pubkey, unsigned int pubkey_len, char *comment) {
