@@ -7,7 +7,7 @@ override CFLAGS += -ggdb -pthread -std=c11 -D_GNU_SOURCE -Wall
 
 .PHONY: all clean run pack_credits
 
-all: sockfun solver/brent solver/signmessage unpack_credits
+all: sockfun solver/brent solver/signmessage unpack_credits fuzzers
 
 parsers.o: parsers.c parsers.h
 	$(CC) $(CFLAGS) -c -o $@ $<
