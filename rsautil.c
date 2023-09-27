@@ -11,6 +11,7 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
+#include <openssl/aes.h>
 
 #include "rsautil.h"
 #include "base64.h"
@@ -65,6 +66,31 @@ int rsa_setup(session_t *s) {
         printf("[+] Setting up session, pubkey_len = %d\n", pubkey_len);
         memcpy(s->pubkey, pubkey, pubkey_len);
     }
+
+#if 0
+    // Test encrypt/decrypt
+    unsigned char *ciphertext;
+    size_t ciphertext_len;
+    const char *plaintext = "Hello, world!";
+    size_t plen = strlen(plaintext);
+    if (encrypt_message(s, (unsigned char *)plaintext, plen, &ciphertext, &ciphertext_len)) {
+        printf("Encrypted message:\n");
+        for (int i = 0; i < ciphertext_len; i++) {
+            printf("%02x", ciphertext[i]);
+        }
+        printf("\n");
+    } else {
+        printf("Encryption failed\n");
+    }
+    unsigned char *plaintext2;
+    size_t plaintext2_len;
+    if (decrypt_message(rsa, ciphertext, ciphertext_len, &plaintext2, &plaintext2_len)) {
+        printf("Decrypted message: %s\n", plaintext2);
+    } else {
+        printf("Decryption failed\n");
+    }
+#endif
+
     return !failed;
 }
 
@@ -179,6 +205,284 @@ int validate_challenge(session_t *sess,
     }
     else {
         printf("[+] Signature verified\n");
+        return 1;
+    }
+}
+
+int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
+                unsigned char *aad, int aad_len,
+                unsigned char *key,
+                unsigned char *iv, int iv_len,
+                unsigned char *ciphertext,
+                unsigned char *tag)
+{
+    EVP_CIPHER_CTX *ctx;
+    int len;
+    int ciphertext_len;
+
+    /* Create and initialise the context */
+    if(!(ctx = EVP_CIPHER_CTX_new())) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /* Initialise the encryption operation. */
+    if(1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL)) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /*
+     * Set IV length if default 12 bytes (96 bits) is not appropriate
+     */
+    if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, iv_len, NULL)) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /* Initialise key and IV */
+    if(1 != EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv)) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /*
+     * Provide any AAD data. This can be called zero or more times as
+     * required
+     */
+    if(1 != EVP_EncryptUpdate(ctx, NULL, &len, aad, aad_len)) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /*
+     * Provide the message to be encrypted, and obtain the encrypted output.
+     * EVP_EncryptUpdate can be called multiple times if necessary
+     */
+    if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len)) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+    ciphertext_len = len;
+
+    /*
+     * Finalise the encryption. Normally ciphertext bytes may be written at
+     * this stage, but this does not occur in GCM mode
+     */
+    if(1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+    ciphertext_len += len;
+
+    /* Get the tag */
+    if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag)) {
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /* Clean up */
+    EVP_CIPHER_CTX_free(ctx);
+
+    return ciphertext_len;
+}
+
+int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
+                unsigned char *aad, int aad_len,
+                unsigned char *tag,
+                unsigned char *key,
+                unsigned char *iv, int iv_len,
+                unsigned char *plaintext)
+{
+    EVP_CIPHER_CTX *ctx;
+    int len;
+    int plaintext_len;
+    int ret;
+
+    /* Create and initialise the context */
+    if(!(ctx = EVP_CIPHER_CTX_new())){
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /* Initialise the decryption operation. */
+    if(!EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL)){
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /* Set IV length. Not necessary if this is 12 bytes (96 bits) */
+    if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, iv_len, NULL)){
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /* Initialise key and IV */
+    if(!EVP_DecryptInit_ex(ctx, NULL, NULL, key, iv)){
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /*
+     * Provide any AAD data. This can be called zero or more times as
+     * required
+     */
+    if(!EVP_DecryptUpdate(ctx, NULL, &len, aad, aad_len)){
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /*
+     * Provide the message to be decrypted, and obtain the plaintext output.
+     * EVP_DecryptUpdate can be called multiple times if necessary
+     */
+    if(!EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len)){
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+    plaintext_len = len;
+
+    /* Set expected tag value. Works in OpenSSL 1.0.1d and later */
+    if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, tag)){
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    /*
+     * Finalise the decryption. A positive return value indicates success,
+     * anything else is a failure - the plaintext is not trustworthy.
+     */
+    ret = EVP_DecryptFinal_ex(ctx, plaintext + len, &len);
+
+    /* Clean up */
+    EVP_CIPHER_CTX_free(ctx);
+
+    if(ret > 0) {
+        /* Success */
+        plaintext_len += len;
+        return plaintext_len;
+    } else {
+        /* Verify failed */
+        return -1;
+    }
+}
+
+// Encrypt a message with the public key. This first generates a random
+// 256-bit AES key, encrypts the message with AES, then encrypts the AES key with
+// the public key. The ciphertext is returned in ciphertext and the length in
+// ciphertext_len.
+int encrypt_message(session_t *sess,
+    unsigned char *message, size_t message_len,
+    unsigned char **ciphertext, size_t *ciphertext_len) {
+    // Create an RSA key from the public key in the session
+    RSA *rsa = RSA_new();
+    BIGNUM *n = BN_new();
+    BN_bin2bn(sess->pubkey, sizeof(sess->pubkey), n);
+    BIGNUM *e = BN_new();
+    BN_set_word(e, RSA_EXPONENT);
+    RSA_set0_key(rsa, n, e, NULL);
+    printf("[+] Public key modulus for encryption:\n");
+    char * n_hex = BN_bn2hex(n);
+    printf("N = %s\n", n_hex);
+    OPENSSL_free(n_hex);
+
+    // Allocate space for the ciphertext
+    // The ciphertext consists of:
+    // 8 bytes for the message length
+    // message_len bytes for the message
+    // 12 bytes for the AES-GCM IV
+    // 16 bytes for the AES-GCM tag
+    // RSA_size(rsa) bytes for the encrypted AES key
+    #define GCM_TAG_LEN 16
+    #define GCM_IV_LEN 12
+    *ciphertext_len = sizeof(size_t) + message_len + GCM_IV_LEN + GCM_TAG_LEN + RSA_size(rsa);
+    *ciphertext = calloc(*ciphertext_len, sizeof(unsigned char));
+
+    // Encrypt the message with AES-GCM
+    memcpy(*ciphertext, &message_len, sizeof(size_t));
+    unsigned char *ciphertext_aes = *ciphertext + sizeof(size_t);
+    unsigned char *tag = ciphertext_aes + message_len;
+    unsigned char *iv = tag + GCM_TAG_LEN;
+    unsigned char *ciphertext_rsa = iv + GCM_IV_LEN;
+    // Generate a random AES key and IV
+    unsigned char aes_key[32];
+    RAND_bytes(aes_key, sizeof(aes_key));
+    RAND_bytes(iv, GCM_IV_LEN);
+    int ciphertext_aes_len = gcm_encrypt(message, message_len, NULL, 0, aes_key, iv, GCM_IV_LEN, ciphertext_aes, tag);
+    if (ciphertext_aes_len <= 0) {
+        printf("[-] AES-GCM encryption failed\n");
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+
+    // Encrypt the message
+    int res = RSA_public_encrypt(sizeof(aes_key), aes_key, ciphertext_rsa, rsa, RSA_PKCS1_OAEP_PADDING);
+    if (res == -1) {
+        printf("[-] Encryption failed\n");
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+    printf("[+] Encryption successful\n");
+    return 1;
+}
+
+// Decrypt a message with the private key. This first decrypts the AES key with
+// the private key, then decrypts the message with AES. The plaintext is
+// returned in plaintext and the length in plaintext_len.
+int decrypt_message(RSA *rsa,
+    unsigned char *ciphertext, size_t ciphertext_len,
+    unsigned char **message, size_t *message_len) {
+    // Allocate space for the plaintext
+    memcpy(message_len, ciphertext, sizeof(size_t));
+    *message = calloc(*message_len, sizeof(unsigned char));
+    unsigned char *ciphertext_aes = ciphertext + sizeof(size_t);
+    unsigned char *tag = ciphertext_aes + *message_len;
+    unsigned char *iv = tag + GCM_TAG_LEN;
+    unsigned char *ciphertext_rsa = iv + GCM_IV_LEN;
+
+    // Decrypt the AES key
+    unsigned char aes_key[32];
+    int res = RSA_private_decrypt(RSA_size(rsa), ciphertext_rsa, aes_key, rsa, RSA_PKCS1_OAEP_PADDING);
+    if (res == -1) {
+        printf("[-] RSA decryption failed\n");
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+    else {
+        printf("[+] Decryption successful\n");
+    }
+
+    // Decrypt the message
+    int plaintext_len = gcm_decrypt(
+        ciphertext_aes, *message_len,
+        NULL, 0, tag, aes_key, iv, GCM_IV_LEN, *message);
+    if (plaintext_len == -1) {
+        printf("[-] AES-GCM decryption failed\n");
+        printf("[-] Error: ");
+        ERR_print_errors_fp(stdout);
+        return 0;
+    }
+    else {
+        printf("[+] Decryption successful\n");
+        *message_len = plaintext_len;
         return 1;
     }
 }

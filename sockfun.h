@@ -9,6 +9,7 @@ typedef struct {
     int control_fd;
     int authenticated;
     unsigned long maxfds;
+    int *client_sockets;
     int nfds;
     fd_set readfds;
     // fd_set writefds;

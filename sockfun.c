@@ -28,6 +28,7 @@
 
 #include "sockfun.h"
 #include "rsautil.h"
+#include "base64.h"
 
 // Lock for getting the client port
 pthread_mutex_t client_port_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -82,12 +83,10 @@ void setup_angel_list() {
             // Strip off the .txt extension
             char *ext = strstr(dir->d_name, ".txt");
             if (ext) *ext = 0;
-            printf("[+] Adding angel: %s\n", dir->d_name);
             angel_list[angel_list_len++] = strdup(dir->d_name);
         }
         closedir(d);
     }
-    printf("[+] Angel list length: %d\n", angel_list_len);
 }
 
 int strptrcmp(const void *a, const void *b) {
@@ -175,7 +174,23 @@ void sendvid(int fd, const char *fullpath, float fps) {
     free(framelist);
 }
 
-void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, int *client_sockets) {
+void easter_egg(int s) {
+    char buffer[BUFFER_SIZE+1] = {0};
+    dprintf(s, "\033[H\033[2J\033[3J");
+    dprintf(s, "+------------------------------- Easter egg: Credits! -------------------------------+\n");
+    dprintf(s, "| Please ensure your terminal is at least 100x40 characters and supports 256 colors. |\n");
+    dprintf(s, "| You will also need to use a terminal that supports unicode, and make sure LANG is  |\n");
+    dprintf(s, "|                     set to something sensible like en_US.UTF-8.                    |\n");
+    dprintf(s, "|                                                                                    |\n");
+    dprintf(s, "|      Sorry, no music :) But feel free to sing along to the karaoke subtitles!      |\n");
+    dprintf(s, "|                                                                                    |\n");
+    dprintf(s, "|                    Press enter to continue and enjoy the show...                   |\n");
+    dprintf(s, "+------------------------------------------------------------------------------------+\n");
+    read(s, buffer, BUFFER_SIZE);
+    sendvid(s, "img/credits", 29.98);
+}
+
+void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess) {
     printf("[+] Received %ld bytes from fd=%d: %s\n", buflen, fd, buffer);
     // Scan for newline
     for (int i = 0; i < buflen; i++) {
@@ -211,7 +226,7 @@ void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, 
                 if (state == 1 && name[0] == 'S') state = 2; else state = 0;
                 if (state == 2 && name[0] == 'A') state = 3; else state = 0;
                 if (state == 3) {
-                    // TODO: something special?
+                    easter_egg(fd);
                 }
                 // Found it
                 char angelpath[256] = {0};
@@ -226,7 +241,7 @@ void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, 
         // Show pending urgent data across all connections
         dprintf(fd, "Pending urgent data reported by our angel sensors:\n{\n");
         for (int i = 0; i <= sess->maxfds; i++) {
-            int cfd = client_sockets[i];
+            int cfd = sess->client_sockets[i];
             if (cfd == 0) continue;
             if (FD_ISSET(cfd, &sess->exceptfds)) {
                 unsigned char oob = 0;
@@ -248,7 +263,7 @@ void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess, 
     else if (strncmp(buffer, "QUIT", 4) == 0) {
         dprintf(fd, "Goodbye!\n");
         close(fd);
-        client_sockets[fd] = 0;
+        sess->client_sockets[fd] = 0;
     }
     else if (strncmp(buffer, "HELP", 4) == 0) {
         dprintf(fd, "Available commands:\n");
@@ -317,7 +332,7 @@ void *client_thread(void *arg) {
     char buffer[BUFFER_SIZE+1] = {0};
     client_thread_args *args = (client_thread_args *)arg;
     session_t *sess = args->sess;
-    int *client_sockets = calloc(sess->maxfds, sizeof(int));
+    sess->client_sockets = calloc(sess->maxfds, sizeof(int));
 
     // Main loop: accept connections, add them to the set, and select
     while(1) {
@@ -328,7 +343,7 @@ void *client_thread(void *arg) {
 
         int i;
         for (i = 0; i < sess->maxfds; i++) {
-            int sd = client_sockets[i];
+            int sd = sess->client_sockets[i];
             if (sd > 0) {
                 FD_SET(sd, &sess->readfds);
                 FD_SET(sd, &sess->exceptfds);
@@ -381,8 +396,8 @@ void *client_thread(void *arg) {
 
             // Find a free slot in the client_sockets array
             for (i = 0; i < sess->maxfds; i++) {
-                if (client_sockets[i] == 0) {
-                    client_sockets[i] = new_socket;
+                if (sess->client_sockets[i] == 0) {
+                    sess->client_sockets[i] = new_socket;
                     break;
                 }
             }
@@ -393,27 +408,27 @@ void *client_thread(void *arg) {
         }
 monitor:
         for (int i = 0; i < sess->maxfds; i++) {
-            int sd = client_sockets[i];
+            int sd = sess->client_sockets[i];
             if (sd == 0) continue;
             if (FD_ISSET(sd, &sess->readfds)) {
                 // printf("[+] Client fd=%d ready for read\n", sd);
                 ssize_t valread = read(sd, buffer, BUFFER_SIZE);
                 if (valread > 0) {
                     buffer[valread] = 0;
-                    handle_client_input(sd, buffer, valread, sess, client_sockets);
+                    handle_client_input(sd, buffer, valread, sess);
                     dprintf(sd, "> ");
                 }
                 else if (valread == 0) {
                     printf("[-] Client fd=%d disconnected\n", sd);
                     close(sd);
-                    client_sockets[i] = 0;
+                    sess->client_sockets[i] = 0;
                 } else {
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         // This is fine, just means there's no data to read
                     } else {
                         perror("read");
                         close(sd);
-                        client_sockets[i] = 0;
+                        sess->client_sockets[i] = 0;
                     }
                 }
             }
@@ -424,12 +439,12 @@ exit_check:
             printf("[-] Client thread exiting\n");
             // Cleanup
             for (int i = 0; i < sess->maxfds; i++) {
-                if (client_sockets[i] > 0) {
-                    close(client_sockets[i]);
+                if (sess->client_sockets[i] > 0) {
+                    close(sess->client_sockets[i]);
             }
             }
             close(sess->server_fd);
-            free(client_sockets);
+            free(sess->client_sockets);
             pthread_exit(NULL);
         }
     }
@@ -473,12 +488,163 @@ int handle_auth(session_t *sess) {
     printf("\n");
     if (validate_challenge(sess, challenge, sizeof(challenge), response, resp_len_bytes)) {
         dprintf(new_socket, "Authentication successful!\n");
+        sendimg(new_socket, "img/gendo_glasses.txt", 0);
         return 1;
     } else {
         dprintf(new_socket, "Authentication failed.\n");
         sendimg(new_socket, "img/asuka_pathetic.txt", 0);
         return 0;
     }
+}
+
+int send_encrypted_data(int s, unsigned char *data, size_t data_len, session_t *sess) {
+    unsigned char *ciphertext;
+    size_t ciphertext_len;
+    if (encrypt_message(sess, data, data_len, &ciphertext, &ciphertext_len)) {
+        // Base64 encode the ciphertext
+        size_t b64_len = 0;
+        char *b64 = base64_encode(ciphertext, ciphertext_len, &b64_len);
+        // Send the ciphertext, 70 characters per line
+        dprintf(s, "-----BEGIN NERV ENCRYPTED MESSAGE-----\n");
+        for (int i = 0; i < b64_len; i += 70) {
+            dprintf(s, "%.*s\n",
+                (int)(b64_len - i > 70 ? 70 : b64_len - i),
+                &b64[i]);
+        }
+        dprintf(s, "-----END NERV ENCRYPTED MESSAGE-----\n");
+        free(ciphertext);
+        free(b64);
+    } else {
+        dprintf(s, "Encryption failed\n");
+        return 0;
+    }
+    return 1;
+}
+
+int unauth_menu(int s, session_t *sess, client_thread_args *client_args) {
+    dprintf(s, "Main menu:\n");
+    dprintf(s, "1. Authenticate\n");
+    dprintf(s, "2. Print public key\n");
+    dprintf(s, "3. Pause client thread\n");
+    dprintf(s, "4. Resume client thread\n");
+    dprintf(s, "5. Exit\n");
+    dprintf(s, "Enter your choice: ");
+    char *pubkey;
+    char buffer[BUFFER_SIZE+1] = {0};
+    int rbytes = read(s, buffer, BUFFER_SIZE);
+    if (rbytes <= 0) {
+        printf("[-] Disconnected\n");
+        return 0;
+    }
+    buffer[rbytes] = 0;
+    // Parse the choice
+    char *endptr;
+    unsigned long choice = strtoul(buffer, &endptr, 10);
+    if (endptr == buffer) {
+        dprintf(s, "Invalid choice\n");
+        return 1;
+    }
+    switch (choice) {
+        case 1:
+            sess->authenticated = handle_auth(sess);
+            break;
+        case 2:
+            pubkey = dump_pubkey_ssh(RSA_EXPONENT, sess->pubkey, sizeof(sess->pubkey), "newuser@nerv");
+            dprintf(s, "Your public key is:\n%s\n", pubkey);
+            free(pubkey);
+            break;
+        case 3:
+            pthread_mutex_lock(&client_args->pause_mutex);
+            client_args->should_pause = 1;
+            pthread_mutex_unlock(&client_args->pause_mutex);
+            dprintf(s, "Client thread paused\n");
+            break;
+        case 4:
+            pthread_mutex_lock(&client_args->pause_mutex);
+            client_args->should_pause = 0;
+            pthread_cond_signal(&client_args->pause_cond);
+            pthread_mutex_unlock(&client_args->pause_mutex);
+            dprintf(s, "Client thread resumed\n");
+            break;
+        case 5:
+            dprintf(s, "Goodbye!\n");
+            return 0;
+        case 31337:
+            easter_egg(s);
+            break;
+        case 1234:
+            dprintf(s, "fd_bits = [ ");
+            for (int i = 0; i <= sess->maxfds; i++) {
+                int cfd = sess->client_sockets[i];
+                if (cfd == 0) continue;
+                if (FD_ISSET(cfd, &sess->exceptfds)) {
+                    dprintf(s, "%d ", cfd);
+                }
+            }
+            dprintf(s, "]\n");
+            break;
+        default:
+            dprintf(s, "Invalid choice\n");
+            break;
+    }
+    return 1;
+}
+
+int auth_menu(int s, session_t *sess, client_thread_args *client_args) {
+    dprintf(s, "Authenticated menu:\n");
+    dprintf(s, "1. Send flag\n");
+    dprintf(s, "2. Show credits\n");
+    dprintf(s, "3. Exit\n");
+    dprintf(s, "Enter your choice: ");
+    char buffer[BUFFER_SIZE+1] = {0};
+    int rbytes = read(s, buffer, BUFFER_SIZE);
+    if (rbytes <= 0) {
+        printf("[-] Disconnected\n");
+        return 0;
+    }
+    buffer[rbytes] = 0;
+    // Parse the choice
+    char *endptr;
+    unsigned long choice = strtoul(buffer, &endptr, 10);
+    if (endptr == buffer) {
+        dprintf(s, "Invalid choice\n");
+        return 1;
+    }
+    switch (choice) {
+        case 1:
+            // Send the flag
+            dprintf(s,
+                "NOTE: Per NERV policy, sensitive data must not be sent over the network\n"
+                "in plaintext. It will be encrypted using your public authentication key\n"
+                "(RSA+AES-256-GCM). The format is:\n"
+                "      [64-bit ciphertext_len][ciphertext][tag][iv][RSA(aes_key)]\n"
+            );
+            dprintf(s, "Sending flag...\n");
+            // Read img/flag.txt into a buffer
+            FILE *f = fopen("img/flag.txt", "r");
+            if (!f) {
+                perror("fopen");
+                return 0;
+            }
+            fseek(f, 0, SEEK_END);
+            size_t flag_len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            unsigned char *flag = malloc(flag_len);
+            fread(flag, 1, flag_len, f);
+            fclose(f);
+            send_encrypted_data(s, flag, flag_len, sess);
+            break;
+        case 2:
+            easter_egg(s);
+            break;
+        case 3:
+            dprintf(s, "Goodbye!\n");
+            return 0;
+        default:
+            dprintf(s, "Invalid choice\n");
+            break;
+    }
+    return 1;
 }
 
 void *control_thread(void *arg) {
@@ -493,10 +659,6 @@ void *control_thread(void *arg) {
     sess->control_fd = new_socket;
     // Generate a new RSA key
     rsa_setup(sess);
-    // Send the public key to the client
-    char *pubkey = dump_pubkey_ssh(RSA_EXPONENT, sess->pubkey, sizeof(sess->pubkey), "newuser@nerv");
-    dprintf(new_socket, "Your public key is:\n%s\n", pubkey);
-    free(pubkey);
 
     // Set their maxfds
     sess->maxfds = args->maxfiles;
@@ -540,74 +702,18 @@ void *control_thread(void *arg) {
     while (1) {
         dprintf(new_socket, "Current authorization level: %s\n",
                 sess->authenticated ? "ADMIN" : "UNPRIVILEGED");
-        dprintf(new_socket, "Main menu:\n");
-        dprintf(new_socket, "1. Authenticate\n");
-        dprintf(new_socket, "2. Print public key\n");
-        dprintf(new_socket, "3. Pause client thread\n");
-        dprintf(new_socket, "4. Resume client thread\n");
-        dprintf(new_socket, "5. Exit\n");
-        dprintf(new_socket, "Enter your choice: ");
-        char buffer[BUFFER_SIZE+1] = {0};
-        int rbytes = read(new_socket, buffer, BUFFER_SIZE);
-        if (rbytes <= 0) {
-            printf("[-] Client disconnected\n");
-            goto server_done;
-        }
-        buffer[rbytes] = 0;
-        // Parse the choice
-        char *endptr;
-        unsigned long choice = strtoul(buffer, &endptr, 10);
-        if (endptr == buffer) {
-            dprintf(new_socket, "Invalid choice\n");
-            continue;
-        }
-        switch (choice) {
-            case 1: {
-                sess->authenticated = handle_auth(sess);
+        if (sess->authenticated) {
+            if (!auth_menu(new_socket, sess, client_args)) {
                 break;
             }
-            case 2:
-                pubkey = dump_pubkey_ssh(RSA_EXPONENT, sess->pubkey, sizeof(sess->pubkey), "newuser@nerv");
-                dprintf(new_socket, "Your public key is:\n%s\n", pubkey);
-                free(pubkey);
+        }
+        else {
+            if (!unauth_menu(new_socket, sess, client_args)) {
                 break;
-            case 3:
-                pthread_mutex_lock(&client_args->pause_mutex);
-                client_args->should_pause = 1;
-                pthread_mutex_unlock(&client_args->pause_mutex);
-                dprintf(new_socket, "Client thread paused\n");
-                break;
-            case 4:
-                pthread_mutex_lock(&client_args->pause_mutex);
-                client_args->should_pause = 0;
-                pthread_cond_signal(&client_args->pause_cond);
-                pthread_mutex_unlock(&client_args->pause_mutex);
-                dprintf(new_socket, "Client thread resumed\n");
-                break;
-            case 5:
-                dprintf(new_socket, "Goodbye!\n");
-                goto server_done;
-                break;
-            case 31337:
-                dprintf(new_socket, "\033[H\033[2J\033[3J");
-                dprintf(new_socket, "+------------------------------- Easter egg: Credits! -------------------------------+\n");
-                dprintf(new_socket, "| Please ensure your terminal is at least 100x40 characters and supports 256 colors. |\n");
-                dprintf(new_socket, "| You will also need to use a terminal that supports unicode, and make sure LANG is  |\n");
-                dprintf(new_socket, "|                     set to something sensible like en_US.UTF-8.                    |\n");
-                dprintf(new_socket, "|                                                                                    |\n");
-                dprintf(new_socket, "|      Sorry, no music :) But feel free to sing along to the karaoke subtitles!      |\n");
-                dprintf(new_socket, "|                                                                                    |\n");
-                dprintf(new_socket, "|                    Press enter to continue and enjoy the show...                   |\n");
-                dprintf(new_socket, "+------------------------------------------------------------------------------------+\n");
-                read(new_socket, buffer, BUFFER_SIZE);
-                sendvid(new_socket, "img/credits", 29.98);
-                break;
-            default:
-                dprintf(new_socket, "Invalid choice\n");
-                break;
+            }
         }
     }
-server_done:
+
     close(new_socket);
     // Unpause the client thread if it's paused
     pthread_mutex_lock(&client_args->pause_mutex);

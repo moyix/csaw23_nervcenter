@@ -9,10 +9,10 @@ LIBS ?= -lssl -lcrypto -lpthread -lgcc_s
 
 all: sockfun solver/brent solver/signmessage unpack_credits
 
-sockfun.o: sockfun.c sockfun.h
+sockfun.o: sockfun.c sockfun.h rsautil.h base64.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-rsautil.o: rsautil.c rsautil.h
+rsautil.o: rsautil.c rsautil.h base64.h sockfun.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 base64.o: base64.c base64.h
