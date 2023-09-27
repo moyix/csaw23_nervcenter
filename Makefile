@@ -1,15 +1,18 @@
 ifeq ($(origin CC),default)
 CC  = clang
 endif
-LDFLAGS ?= -ggdb -pthread
-CFLAGS += -ggdb -pthread -std=c11 -D_GNU_SOURCE
 LIBS ?= -lssl -lcrypto -lpthread -lgcc_s
+override LDFLAGS += -ggdb -pthread
+override CFLAGS += -ggdb -pthread -std=c11 -D_GNU_SOURCE -Wall
 
 .PHONY: all clean run pack_credits
 
 all: sockfun solver/brent solver/signmessage unpack_credits
 
-sockfun.o: sockfun.c sockfun.h rsautil.h base64.h
+parsers.o: parsers.c parsers.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+sockfun.o: sockfun.c sockfun.h rsautil.h base64.h credits.h parsers.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 rsautil.o: rsautil.c rsautil.h base64.h sockfun.h
@@ -18,8 +21,13 @@ rsautil.o: rsautil.c rsautil.h base64.h sockfun.h
 base64.o: base64.c base64.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-sockfun: sockfun.o rsautil.o base64.o
+sockfun: sockfun.o rsautil.o base64.o parsers.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+
+fuzzers: fuzzers/client_fuzzer
+
+fuzzers/client_fuzzer: fuzzers/client_fuzzer.c parsers.c parsers.h
+	clang -ggdb -O1 -fsanitize=fuzzer,address -o $@ $(word 1,$^) $(word 2,$^)
 
 solver/brent: solver/brent.c
 	$(CC) -O3 -g -o $@ $< -lgmp

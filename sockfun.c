@@ -17,6 +17,7 @@
 #include <sys/sendfile.h>
 #include <execinfo.h>
 #include <dirent.h>
+#include <poll.h>
 
 #define BUFFER_SIZE 1024
 #define CONTROL_PORT 2000
@@ -29,6 +30,7 @@
 #include "sockfun.h"
 #include "rsautil.h"
 #include "base64.h"
+#include "parsers.h"
 
 // Lock for getting the client port
 pthread_mutex_t client_port_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -37,7 +39,6 @@ unsigned long increase_fd_limit(unsigned long maxfiles) {
     // Try to increase open file limit
     // If that fails, raise it as high as we can
     int r;
-    rlim_t cur_max;
     struct rlimit rlim;
     r = getrlimit(RLIMIT_NOFILE, &rlim);
     if (r < 0) {
@@ -60,15 +61,6 @@ unsigned long increase_fd_limit(unsigned long maxfiles) {
         }
     }
     return rlim.rlim_cur;
-}
-
-void dump_key(session_t *s) {
-    // hexdump the buffer
-    printf("s->pubkey = ");
-    for (int i = 0; i < 16; i++) {
-        printf("%02x", s->pubkey[i]);
-    }
-    printf(" [...]\n");
 }
 
 char *angel_list[32];
@@ -174,119 +166,130 @@ void sendvid(int fd, const char *fullpath, float fps) {
     free(framelist);
 }
 
+void read_block(int s, char *buffer, size_t size, int timeout) {
+    // Poll any pending input with a short timeout
+    struct pollfd pfd = { .fd = s, .events = POLLIN, };
+    poll(&pfd, 1, timeout);
+    if (pfd.revents & POLLIN) {
+        read(s, buffer, BUFFER_SIZE);
+    }
+}
+
+#include "credits.h"
+#define CREDITS_KEY 0xe7
+
 void easter_egg(int s) {
     char buffer[BUFFER_SIZE+1] = {0};
     dprintf(s, "\033[H\033[2J\033[3J");
-    dprintf(s, "+------------------------------- Easter egg: Credits! -------------------------------+\n");
-    dprintf(s, "| Please ensure your terminal is at least 100x40 characters and supports 256 colors. |\n");
-    dprintf(s, "| You will also need to use a terminal that supports unicode, and make sure LANG is  |\n");
-    dprintf(s, "|                     set to something sensible like en_US.UTF-8.                    |\n");
-    dprintf(s, "|                                                                                    |\n");
-    dprintf(s, "|      Sorry, no music :) But feel free to sing along to the karaoke subtitles!      |\n");
-    dprintf(s, "|                                                                                    |\n");
-    dprintf(s, "|                    Press enter to continue and enjoy the show...                   |\n");
-    dprintf(s, "+------------------------------------------------------------------------------------+\n");
-    read(s, buffer, BUFFER_SIZE);
+    for (int i = 0; i < creditsbuf_len; i++) creditsbuf[i] ^= CREDITS_KEY;
+    dprintf(s, "%s", (const char *)creditsbuf);
+    for (int i = 0; i < creditsbuf_len; i++) creditsbuf[i] ^= CREDITS_KEY;
+    // Wait for enter. s may be non-blocking, so we need to poll for input
+    read_block(s, buffer, BUFFER_SIZE, -1);
     sendvid(s, "img/credits", 29.98);
 }
 
-void handle_client_input(int fd, char *buffer, ssize_t buflen, session_t *sess) {
-    printf("[+] Received %ld bytes from fd=%d: %s\n", buflen, fd, buffer);
-    // Scan for newline
-    for (int i = 0; i < buflen; i++) {
-        if (buffer[i] == '\n') {
-            buffer[i] = 0;
-            buflen = i;
-            break;
-        }
-    }
-    if (strncmp(buffer, "LIST", 4) == 0) {
-        // Send the list of angels
-        for (int i = 0; i < angel_list_len; i++) {
-            dprintf(fd, "%s\n", angel_list[i]);
-        }
-    }
-    else if (strncmp(buffer, "EXAMINE", 7) == 0) {
-        static _Thread_local char state = 0;
-        printf("[+] Examine command received: %s\n", buffer);
-        char *ptr = &buffer[7];
-        char *end = &buffer[buflen];
-        // Skip whitespace
-        while (ptr < end && (*ptr == ' ' || *ptr == '\t')) ptr++;
-        if (ptr == end) {
-            dprintf(fd, "Usage: EXAMINE <angel>\n");
-            return;
-        }
-        char *name = ptr;
-        printf("[+] Examine angel: %s\n", name);
-        // Find the angel
-        for (int i = 0; i < angel_list_len; i++) {
-            if (strcmp(angel_list[i], name) == 0) {
-                if (state == 0 && name[0] == 'R') state = 1; else state = 0;
-                if (state == 1 && name[0] == 'S') state = 2; else state = 0;
-                if (state == 2 && name[0] == 'A') state = 3; else state = 0;
-                if (state == 3) {
-                    easter_egg(fd);
-                }
-                // Found it
-                char angelpath[256] = {0};
-                snprintf(angelpath, sizeof(angelpath), "img/angels/%s.txt", name);
-                sendimg(fd, angelpath, IMG_DELAY);
-                return;
+void handle_client_input(int fd, char *buffer, size_t buflen, session_t *sess) {
+    char *arg = NULL;
+    client_command_t cmd = parse_client_input(buffer, buflen, &arg);
+    int cmd_int = cmd & ~CLIENT_CMD_INVALID;
+    int cmd_invalid = cmd & CLIENT_CMD_INVALID;
+    switch (cmd_int) {
+        case CLIENT_CMD_LIST:
+            // Send the list of angels
+            for (int i = 0; i < angel_list_len; i++) {
+                dprintf(fd, "%s\n", angel_list[i]);
             }
-        }
-        dprintf(fd, "Unknown angel '%s'\n", name);
-    }
-    else if (strncmp(buffer, "EMERGENCY", 9) == 0) {
-        // Show pending urgent data across all connections
-        dprintf(fd, "Pending urgent data reported by our angel sensors:\n{\n");
-        for (int i = 0; i <= sess->maxfds; i++) {
-            int cfd = sess->client_sockets[i];
-            if (cfd == 0) continue;
-            if (FD_ISSET(cfd, &sess->exceptfds)) {
-                unsigned char oob = 0;
-                ssize_t r = recv(cfd, &oob, 1, MSG_OOB);
-                if (r < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINVAL) {
-                        dprintf(fd, "No urgent data available\n");
-                    } else {
-                        perror("recv");
+            break;
+        case CLIENT_CMD_EXAMINE:
+            if (cmd_invalid) {
+                dprintf(fd, "usage: EXAMINE <angel>\n");
+                break;
+            }
+            static _Thread_local char state = 0;
+            char *name = arg;
+            printf("[+] Examine angel: %s\n", name);
+            // Find the angel
+            for (int i = 0; i < angel_list_len; i++) {
+                if (strcmp(angel_list[i], name) == 0) {
+                    // Easter egg: if someone examines angels starting with 'R', 'S', and 'A'
+                    // in that order (without any other angels in between), show the credits.
+                    if (state == 0 && name[0] == 'R') {
+                        state = 1;
+                    }
+                    else if (state == 1 && name[0] == 'S') {
+                        state = 2;
+                    }
+                    else if (state == 2 && name[0] == 'A') {
+                        state = 3;
+                    }
+                    else {
+                        state = 0;
+                    }
+                    // Found it
+                    char angelpath[256] = {0};
+                    snprintf(angelpath, sizeof(angelpath), "img/angels/%s.txt", name);
+                    sendimg(fd, angelpath, IMG_DELAY);
+                    if (state == 3) {
+                        easter_egg(fd);
+                        state = 0;
+                        return;
+                    }
+                    return;
+                }
+            }
+            dprintf(fd, "Unknown angel '%s'\n", name);
+            break;
+        case CLIENT_CMD_EMERGENCY:
+            // Show pending urgent data across all connections
+            dprintf(fd, "Pending urgent data reported by our angel sensors:\n{\n");
+            for (int i = 0; i <= sess->maxfds; i++) {
+                int cfd = sess->client_sockets[i];
+                if (cfd == 0) continue;
+                if (FD_ISSET(cfd, &sess->exceptfds)) {
+                    unsigned char oob = 0;
+                    ssize_t r = recv(cfd, &oob, 1, MSG_OOB);
+                    if (r < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINVAL) {
+                            dprintf(fd, "No urgent data available\n");
+                        } else {
+                            perror("recv");
+                        }
+                    }
+                    else {
+                        dprintf(fd, "  fd=%04d: '%c',\n", cfd, oob);
                     }
                 }
-                else {
-                    dprintf(fd, "  fd=%04d: '%c',\n", cfd, oob);
-                }
             }
-        }
-        dprintf(fd, "}\n");
-    }
-    else if (strncmp(buffer, "QUIT", 4) == 0) {
-        dprintf(fd, "Goodbye!\n");
-        close(fd);
-        sess->client_sockets[fd] = 0;
-    }
-    else if (strncmp(buffer, "HELP", 4) == 0) {
-        dprintf(fd, "Available commands:\n");
-        dprintf(fd, "LIST\n");
-        dprintf(fd, "  List known angels.\n");
-        dprintf(fd, "EXAMINE <angel>\n");
-        dprintf(fd, "  Examine an angel.\n");
-        dprintf(fd, "EMERGENCY\n");
-        dprintf(fd, "  Examine any urgent data.\n");
-        dprintf(fd, "HELP\n");
-        dprintf(fd, "  Show this help message.\n");
-        dprintf(fd, "QUIT\n");
-        dprintf(fd, "  Disconnect this client.\n");
-    }
-    else {
-        dprintf(fd, "Unknown command\n");
+            dprintf(fd, "}\n");
+            break;
+        case CLIENT_CMD_QUIT:
+            dprintf(fd, "Goodbye!\n");
+            close(fd);
+            sess->client_sockets[fd] = 0;
+            break;
+        case CLIENT_CMD_HELP:
+            dprintf(fd, "Available commands:\n");
+            dprintf(fd, "LIST\n");
+            dprintf(fd, "  List known angels.\n");
+            dprintf(fd, "EXAMINE <angel>\n");
+            dprintf(fd, "  Examine an angel.\n");
+            dprintf(fd, "EMERGENCY\n");
+            dprintf(fd, "  Examine any urgent data.\n");
+            dprintf(fd, "HELP\n");
+            dprintf(fd, "  Show this help message.\n");
+            dprintf(fd, "QUIT\n");
+            dprintf(fd, "  Disconnect this client.\n");
+            break;
+        case CLIENT_CMD_UNKNOWN:
+            dprintf(fd, "Unknown command\n");
+            break;
     }
 }
 
 int open_server_port(int port) {
     int server_fd;
     struct sockaddr_in address;
-    int addrlen = sizeof(address);
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket failed");
         return -2;
@@ -481,11 +484,6 @@ int handle_auth(session_t *sess) {
         response[i] = strtol(byte, NULL, 16);
     }
     int resp_len_bytes = i;
-    printf("Received response (%d bytes): ", resp_len_bytes);
-    for (int i = 0; i < resp_len_bytes; i++) {
-        printf("%02x", response[i]);
-    }
-    printf("\n");
     if (validate_challenge(sess, challenge, sizeof(challenge), response, resp_len_bytes)) {
         dprintf(new_socket, "Authentication successful!\n");
         sendimg(new_socket, "img/gendo_glasses.txt", 0);
