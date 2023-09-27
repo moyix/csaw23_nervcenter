@@ -1,6 +1,6 @@
 #pragma once
 
-#include "sockfun.h"
+#include "nervcenter.h"
 #include <openssl/rsa.h>
 
 int rsa_setup(session_t *thing);

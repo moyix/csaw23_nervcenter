@@ -7,21 +7,21 @@ override CFLAGS += -ggdb -pthread -std=c11 -D_GNU_SOURCE -Wall
 
 .PHONY: all clean run pack_credits
 
-all: sockfun solver/brent solver/signmessage unpack_credits fuzzers
+all: nervcenter solver/brent solver/signmessage unpack_credits fuzzers
 
 parsers.o: parsers.c parsers.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-sockfun.o: sockfun.c sockfun.h rsautil.h base64.h credits.h parsers.h
+nervcenter.o: nervcenter.c nervcenter.h rsautil.h base64.h credits.h parsers.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-rsautil.o: rsautil.c rsautil.h base64.h sockfun.h
+rsautil.o: rsautil.c rsautil.h base64.h nervcenter.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 base64.o: base64.c base64.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-sockfun: sockfun.o rsautil.o base64.o parsers.o
+nervcenter: nervcenter.o rsautil.o base64.o parsers.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 fuzzers: fuzzers/client_fuzzer
@@ -45,7 +45,7 @@ repack_credits:
 	tar cJf img/credits.tar.xz img/credits/frame_*.txt
 
 clean:
-	rm -f sockfun solver/signmessage solver/brent *.o
+	rm -f nervcenter solver/signmessage solver/brent *.o
 
-run: sockfun
-	./sockfun
+run: nervcenter
+	./nervcenter

@@ -27,7 +27,7 @@
 
 #define CHALDEBUG
 
-#include "sockfun.h"
+#include "nervcenter.h"
 #include "rsautil.h"
 #include "base64.h"
 #include "parsers.h"
