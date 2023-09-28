@@ -2,6 +2,10 @@
 
 #include <sys/select.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define RSA_EXPONENT 65537
 #define RSA_KEY_SIZE 1024
 typedef struct {
@@ -16,3 +20,7 @@ typedef struct {
     fd_set exceptfds;
     unsigned char pubkey[RSA_KEY_SIZE/8];
 } session_t;
+
+#ifdef __cplusplus
+}
+#endif

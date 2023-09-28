@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     SENSOR_CMD_LIST         = 1,
     SENSOR_CMD_EXAMINE      = 2,
@@ -11,3 +15,7 @@ typedef enum {
 } sensor_command_t;
 
 sensor_command_t parse_sensor_input(char *buffer, size_t buflen, char **arg);
+
+#ifdef __cplusplus
+}
+#endif

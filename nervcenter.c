@@ -33,6 +33,11 @@
 // Lock for getting the sensor port
 pthread_mutex_t sensor_port_lock = PTHREAD_MUTEX_INITIALIZER;
 
+// Signal handler for SIGUSR1, which just calls exit() so we can get leak info
+void sigusr1_handler(int signum) {
+    exit(0);
+}
+
 unsigned long increase_fd_limit(unsigned long maxfiles) {
     // Try to increase open file limit
     // If that fails, raise it as high as we can
@@ -100,8 +105,11 @@ void sendimg(int fd, const char *path, int delay) {
     while ((nread = getline(&line, &len, img)) != -1) {
         // printf("Sending line: %s", line);
         dprintf(fd, "%s", line);
+#ifndef CHALDEBUG
         if (delay) usleep(delay);
+#endif
     }
+    free(line);
     fclose(img);
 }
 
@@ -285,7 +293,7 @@ void handle_sensor_input(int fd, char *buffer, size_t buflen, session_t *sess) {
     }
 }
 
-int open_server_port(unsigned short port) {
+int open_server_port(unsigned short port, int bindfail_ok) {
     int server_fd;
     struct sockaddr_in address;
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -297,6 +305,7 @@ int open_server_port(unsigned short port) {
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
         perror("setsockopt");
+        close(server_fd);
         return -2;
     }
 
@@ -307,12 +316,14 @@ int open_server_port(unsigned short port) {
 
     // Bind the server socket
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("bind failed");
+        if (!bindfail_ok) perror("bind failed");
+        close(server_fd);
         // bind failure means the port is already in use
         return -1;
     }
     if (listen(server_fd, 3) < 0) {
         perror("listen failed");
+        close(server_fd);
         return -2;
     }
 
@@ -405,7 +416,8 @@ void *sensor_thread(void *arg) {
             }
             if (i == sess->maxfds) {
                 printf("[-] Max connections reached\n");
-                pthread_exit(NULL);
+                close(new_socket);
+                goto sensor_cleanup;
             }
         }
 monitor:
@@ -439,17 +451,19 @@ exit_check:
         // Check if we should exit
         if (atomic_load(&args->should_exit)) {
             printf("[-] Sensor thread exiting\n");
-            // Cleanup
-            for (int i = 0; i < sess->maxfds; i++) {
-                if (sess->sensor_sockets[i] > 0) {
-                    close(sess->sensor_sockets[i]);
-            }
-            }
-            close(sess->server_fd);
-            free(sess->sensor_sockets);
-            pthread_exit(NULL);
+            goto sensor_cleanup;
         }
     }
+sensor_cleanup:
+    // Cleanup
+    for (int i = 0; i < sess->maxfds; i++) {
+        if (sess->sensor_sockets[i] > 0) {
+            close(sess->sensor_sockets[i]);
+        }
+    }
+    close(sess->server_fd);
+    free(sess->sensor_sockets);
+    pthread_exit(NULL);
 }
 
 typedef struct {
@@ -472,7 +486,8 @@ int handle_auth(session_t *sess) {
     // response is an RSA signature of the challenge
     unsigned char response[KEY_SIZE/8];
     int resp_len = read(new_socket, buffer, BUFFER_SIZE);
-    buffer[resp_len] = 0;
+    if (resp_len >= 0)
+        buffer[resp_len] = 0;
     // Read the response as a hex string
     int i;
     for (i = 0; i < sizeof(response) && i < resp_len; i++) {
@@ -672,6 +687,7 @@ int auth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
 
 void *control_thread(void *arg) {
     control_thread_args *args = (control_thread_args *)arg;
+    sensor_thread_args * sensor_args = NULL;
     int new_socket = args->sock;
 
     // Session setup
@@ -690,11 +706,11 @@ void *control_thread(void *arg) {
     pthread_mutex_lock(&sensor_port_lock);
     unsigned short sensor_port = SENSOR_PORT_BASE;
     int sensor_fd = -1;
-    while ((sensor_fd = open_server_port(sensor_port)) < 0) {
+    while ((sensor_fd = open_server_port(sensor_port, 1)) < 0) {
         if (sensor_fd == -2) {
             printf("[-] Failed to open sensor port %d\n", sensor_port);
             pthread_mutex_unlock(&sensor_port_lock);
-            pthread_exit(NULL);
+            goto control_cleanup;
         }
         // Keep trying until we find a free port
         sensor_port++;
@@ -705,14 +721,14 @@ void *control_thread(void *arg) {
     int opt = 0;
     if (setsockopt(sess->server_fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof(opt))) {
         perror("setsockopt");
-        pthread_exit(NULL);
+        goto control_cleanup;
     }
     dprintf(new_socket, "Session sensor port is: %d\n", sensor_port);
     dprintf(new_socket, "You can connect to this port to view sensor data.\n");
 
     // Spawn a thread to handle the sensor connections
     pthread_t thread;
-    sensor_thread_args *sensor_args = calloc(1, sizeof(sensor_thread_args));
+    sensor_args = calloc(1, sizeof(sensor_thread_args));
     sensor_args->sess = sess;
     sensor_args->should_exit = 0;
     sensor_args->should_pause = 0;
@@ -738,18 +754,21 @@ void *control_thread(void *arg) {
             }
         }
     }
-
+control_cleanup:
     close(new_socket);
     // Unpause the sensor thread if it's paused
-    pthread_mutex_lock(&sensor_args->pause_mutex);
-    sensor_args->should_pause = 0;
-    pthread_cond_signal(&sensor_args->pause_cond);
-    pthread_mutex_unlock(&sensor_args->pause_mutex);
-    // Tell the sensor thread to exit
-    atomic_store(&sensor_args->should_exit, 1);
-    pthread_join(thread, NULL);
+    if (sensor_args != NULL) {
+        pthread_mutex_lock(&sensor_args->pause_mutex);
+        sensor_args->should_pause = 0;
+        pthread_cond_signal(&sensor_args->pause_cond);
+        pthread_mutex_unlock(&sensor_args->pause_mutex);
+        // Tell the sensor thread to exit
+        atomic_store(&sensor_args->should_exit, 1);
+        pthread_join(thread, NULL);
+        free(sensor_args);
+    }
+    free(args);
     free(sess);
-    free(sensor_args);
     printf("[-] Control thread exiting\n");
     // Terminate this thread
     pthread_exit(NULL);
@@ -757,6 +776,10 @@ void *control_thread(void *arg) {
 }
 
 int main() {
+    // Ignore SIGPIPE so we don't crash when a sensor disconnects
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGUSR1, sigusr1_handler);
+
     // Set max files
     unsigned long maxfiles = increase_fd_limit(PREFERRED_MAXFILES);
     printf("[+] Max files is %lu\n", maxfiles);
@@ -764,12 +787,9 @@ int main() {
     // Set up the angel list
     setup_angel_list();
 
-    // Ignore SIGPIPE so we don't crash when a sensor disconnects
-    signal(SIGPIPE, SIG_IGN);
-
     int control_fd;
     printf("[+] Setting up control port\n");
-    control_fd = open_server_port(CONTROL_PORT);
+    control_fd = open_server_port(CONTROL_PORT, 0);
     // Accept connections in a loop. For each connection, generate a new RSA key
     // and send the public key to the sensor, find a free port for the sensor to
     // connect to, and spawn a thread to handle the sensor connections.
@@ -778,8 +798,7 @@ int main() {
         int addrlen = sizeof(address);
         int new_socket;
         if ((new_socket = accept(control_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-            perror("accept");
-            pthread_exit(NULL);
+            continue;
         }
         printf("[+] New control connection from %s:%d assigned to fd=%d\n", inet_ntoa(address.sin_addr), ntohs(address.sin_port), new_socket);
 

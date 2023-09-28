@@ -90,7 +90,10 @@ int rsa_setup(session_t *s) {
         printf("Decryption failed\n");
     }
 #endif
-
+    // Clean up
+    free(pubkey);
+    RSA_free(rsa);
+    BN_free(e);
     return !failed;
 }
 
@@ -202,17 +205,22 @@ rsa_error_t validate_challenge(session_t *sess,
 
     // Verify the signature
     int res = RSA_verify(NID_sha256, challenge, challenge_len, response, response_len, rsa);
+    rsa_error_t ret;
     printf("Verified = %d\n", res);
     if (res != 1) {
         printf("[-] Signature verification failed\n");
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return RERR_BADSIG;
+        ret = RERR_BADSIG;
     }
     else {
         printf("[+] Signature verified\n");
-        return RERR_OK;
+        ret = RERR_OK;
     }
+    // Clean up
+    RSA_free(rsa);
+    // rsa takes ownership of e and n so don't free them
+    return ret;
 }
 
 int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
@@ -225,19 +233,20 @@ int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
     EVP_CIPHER_CTX *ctx;
     int len;
     int ciphertext_len;
+    int ret = 0;
 
     /* Create and initialise the context */
     if(!(ctx = EVP_CIPHER_CTX_new())) {
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        goto gcm_encrypt_cleanup;
     }
 
     /* Initialise the encryption operation. */
     if(1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL)) {
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        goto gcm_encrypt_cleanup;
     }
 
     /*
@@ -246,14 +255,14 @@ int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
     if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, iv_len, NULL)) {
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        goto gcm_encrypt_cleanup;
     }
 
     /* Initialise key and IV */
     if(1 != EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv)) {
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        goto gcm_encrypt_cleanup;
     }
 
     /*
@@ -263,7 +272,7 @@ int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
     if(1 != EVP_EncryptUpdate(ctx, NULL, &len, aad, aad_len)) {
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        goto gcm_encrypt_cleanup;
     }
 
     /*
@@ -273,7 +282,7 @@ int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
     if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len)) {
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        goto gcm_encrypt_cleanup;
     }
     ciphertext_len = len;
 
@@ -284,7 +293,7 @@ int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
     if(1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) {
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        goto gcm_encrypt_cleanup;
     }
     ciphertext_len += len;
 
@@ -294,11 +303,12 @@ int gcm_encrypt(unsigned char *plaintext, int plaintext_len,
         ERR_print_errors_fp(stdout);
         return 0;
     }
+    ret = ciphertext_len;
 
+gcm_encrypt_cleanup:
     /* Clean up */
     EVP_CIPHER_CTX_free(ctx);
-
-    return ciphertext_len;
+    return ret;
 }
 
 int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
@@ -317,28 +327,32 @@ int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
     if(!(ctx = EVP_CIPHER_CTX_new())){
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = -1;
+        goto gcm_decrypt_cleanup;
     }
 
     /* Initialise the decryption operation. */
     if(!EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL)){
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = -1;
+        goto gcm_decrypt_cleanup;
     }
 
     /* Set IV length. Not necessary if this is 12 bytes (96 bits) */
     if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, iv_len, NULL)){
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = -1;
+        goto gcm_decrypt_cleanup;
     }
 
     /* Initialise key and IV */
     if(!EVP_DecryptInit_ex(ctx, NULL, NULL, key, iv)){
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = -1;
+        goto gcm_decrypt_cleanup;
     }
 
     /*
@@ -348,7 +362,8 @@ int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
     if(!EVP_DecryptUpdate(ctx, NULL, &len, aad, aad_len)){
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = -1;
+        goto gcm_decrypt_cleanup;
     }
 
     /*
@@ -358,7 +373,8 @@ int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
     if(!EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len)){
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = -1;
+        goto gcm_decrypt_cleanup;
     }
     plaintext_len = len;
 
@@ -366,7 +382,8 @@ int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
     if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, tag)){
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = -1;
+        goto gcm_decrypt_cleanup;
     }
 
     /*
@@ -375,6 +392,7 @@ int gcm_decrypt(unsigned char *ciphertext, int ciphertext_len,
      */
     ret = EVP_DecryptFinal_ex(ctx, plaintext + len, &len);
 
+gcm_decrypt_cleanup:
     /* Clean up */
     EVP_CIPHER_CTX_free(ctx);
 
@@ -430,11 +448,13 @@ int encrypt_message(session_t *sess,
     RAND_bytes(aes_key, sizeof(aes_key));
     RAND_bytes(iv, GCM_IV_LEN);
     int ciphertext_aes_len = gcm_encrypt(message, message_len, NULL, 0, aes_key, iv, GCM_IV_LEN, ciphertext_aes, tag);
+    int ret = 0;
     if (ciphertext_aes_len <= 0) {
         printf("[-] AES-GCM encryption failed\n");
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = 0;
+        goto rsa_enc_cleanup;
     }
 
     // Encrypt the message
@@ -443,10 +463,16 @@ int encrypt_message(session_t *sess,
         printf("[-] Encryption failed\n");
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        ret = 0;
     }
-    printf("[+] Encryption successful\n");
-    return 1;
+    else {
+        printf("[+] Encryption successful\n");
+        ret = 1;
+    }
+rsa_enc_cleanup:
+    // Clean up
+    RSA_free(rsa);
+    return ret;
 }
 
 // Decrypt a message with the private key. This first decrypts the AES key with

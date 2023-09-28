@@ -3,6 +3,10 @@
 #include "nervcenter.h"
 #include <openssl/rsa.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     RERR_OK,
     RERR_LEADING_ZERO,
@@ -26,3 +30,7 @@ int encrypt_message(session_t *sess,
 int decrypt_message(RSA *rsa,
     unsigned char *ciphertext, size_t ciphertext_len,
     unsigned char **message, size_t *message_len);
+
+#ifdef __cplusplus
+}
+#endif
