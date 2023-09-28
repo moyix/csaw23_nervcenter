@@ -178,9 +178,15 @@ void generate_challenge(unsigned char *challenge, size_t challenge_len) {
 }
 
 // Validate challenge response
-int validate_challenge(session_t *sess,
+rsa_error_t validate_challenge(session_t *sess,
     unsigned char *challenge, size_t challenge_len,
     unsigned char *response, size_t response_len) {
+
+    rsa_error_t result = validate_key(sess->pubkey, sizeof(sess->pubkey));
+    if (result != RERR_OK) {
+        return result;
+    }
+
     // Create an RSA key from the public key in the session
     RSA *rsa = RSA_new();
     BIGNUM *n = BN_new();
@@ -201,11 +207,11 @@ int validate_challenge(session_t *sess,
         printf("[-] Signature verification failed\n");
         printf("[-] Error: ");
         ERR_print_errors_fp(stdout);
-        return 0;
+        return RERR_BADSIG;
     }
     else {
         printf("[+] Signature verified\n");
-        return 1;
+        return RERR_OK;
     }
 }
 

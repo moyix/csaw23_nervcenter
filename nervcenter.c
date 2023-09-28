@@ -482,13 +482,33 @@ int handle_auth(session_t *sess) {
         response[i] = strtol(byte, NULL, 16);
     }
     int resp_len_bytes = i;
-    if (validate_challenge(sess, challenge, sizeof(challenge), response, resp_len_bytes)) {
+    rsa_error_t res = validate_challenge(sess, challenge, sizeof(challenge), response, resp_len_bytes);
+    if (res == RERR_OK) {
         dprintf(new_socket, "Authentication successful!\n");
         sendimg(new_socket, IMGDIR "/gendo_glasses.txt", 0);
         return 1;
     } else {
         dprintf(new_socket, "Authentication failed.\n");
-        sendimg(new_socket, IMGDIR "/asuka_pathetic.txt", 0);
+        if (res == RERR_BADSIG) {
+            sendimg(new_socket, IMGDIR "/shinji.txt", 0);
+            dprintf(new_socket, "Invalid signature\n");
+        }
+        else if (res == RERR_EVEN_KEY) {
+            sendimg(new_socket, IMGDIR "/misato.txt", 0);
+            dprintf(new_socket, "Invalid key: modulus is even\n");
+        }
+        else if (res == RERR_KEY_TOO_LARGE) {
+            sendimg(new_socket, IMGDIR "/ritsuko.txt", 0);
+            dprintf(new_socket, "Invalid key: too large\n");
+        }
+        else if (res == RERR_KEY_TOO_SMALL) {
+            sendimg(new_socket, IMGDIR "/asuka_pathetic.txt", 0);
+            dprintf(new_socket, "Invalid key: too small\n");
+        }
+        else {
+            sendimg(new_socket, IMGDIR "/asuka.txt", 0);
+            dprintf(new_socket, "Unknown error: %d\n", res);
+        }
         return 0;
     }
 }
