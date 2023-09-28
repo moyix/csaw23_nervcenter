@@ -28,6 +28,10 @@ add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c)
 target_compile_definitions(nervcenter PRIVATE -DIMGDIR="${CMAKE_SOURCE_DIR}/img")
 target_link_libraries(nervcenter PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread)
 
+if(CMAKE_BUILD_TYPE MATCHES Debug)
+    target_compile_definitions(nervcenter PRIVATE CHALDEBUG)
+endif()
+
 # client_fuzzer executable
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     add_executable(client_fuzzer fuzzers/client_fuzzer.c parsers.c)
@@ -50,6 +54,12 @@ set_target_properties(brent PROPERTIES
 add_executable(signmessage solver/signmessage.c)
 target_link_libraries(signmessage PRIVATE OpenSSL::Crypto)
 set_target_properties(signmessage PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/solver"
+)
+
+add_executable(decryptmessage solver/decryptmessage.c)
+target_link_libraries(decryptmessage PRIVATE OpenSSL::Crypto)
+set_target_properties(decryptmessage PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/solver"
 )
 

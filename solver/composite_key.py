@@ -10,6 +10,7 @@ import argparse
 import os
 import time
 import contextlib
+from pathlib import Path
 import signal
 # brent is probabilistic, do it in parallel
 import multiprocessing
@@ -51,7 +52,11 @@ def primes(n):
     return list(primes_yield(n))
 
 def rootpath():
-    return os.path.dirname(os.path.realpath(__file__))
+    # os.path.dirname(os.path.realpath(__file__))
+    return Path(__file__).parent.absolute()
+
+def solverbins():
+    return rootpath() / "../build/solver"
 
 def terminate_proc_tree(pid, including_parent=False):
     parent = psutil.Process(pid)
@@ -97,7 +102,7 @@ class CompositePrivateKey(object):
         )
 
 def brent_parallel(n, event: multiprocessing.Event, results: multiprocessing.Queue):
-    res = subprocess.check_output(['%s/brent' % rootpath(), str(n)], text=True)
+    res = subprocess.check_output([solverbins() / 'brent', str(n)], text=True)
     res = res.strip()
     if res:
         res = int(res)

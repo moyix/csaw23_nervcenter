@@ -25,8 +25,6 @@
 #define PREFERRED_MAXFILES 1200
 #define KEY_SIZE 1024
 
-#define CHALDEBUG
-
 #include "nervcenter.h"
 #include "rsautil.h"
 #include "base64.h"
@@ -567,6 +565,7 @@ int unauth_menu(int s, session_t *sess, client_thread_args *client_args) {
         case 5:
             dprintf(s, "Goodbye!\n");
             return 0;
+#ifdef CHALDEBUG
         case 31337:
             easter_egg(s);
             break;
@@ -581,6 +580,11 @@ int unauth_menu(int s, session_t *sess, client_thread_args *client_args) {
             }
             dprintf(s, "]\n");
             break;
+        case 0xdead:
+            dprintf(s, "Received debug mode shutdown request\n");
+            exit(0);
+            return 0;
+#endif
         default:
             dprintf(s, "Invalid choice\n");
             break;
@@ -695,6 +699,7 @@ void *control_thread(void *arg) {
     pthread_create(&thread, NULL, client_thread, client_args);
     char threadname[16] = {0};
     snprintf(threadname, sizeof(threadname), "client-%6d", client_port);
+    pthread_setname_np(thread, threadname);
 
     // Server loop
     while (1) {
@@ -762,6 +767,9 @@ int main() {
         args->sock = new_socket;
         args->maxfiles = maxfiles;
         pthread_create(&thread, NULL, control_thread, (void *)args);
+        char threadname[16] = {0};
+        sprintf(threadname, "control-%d", new_socket);
+        pthread_setname_np(thread, threadname);
     }
 
     return 0;

