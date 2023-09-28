@@ -8,7 +8,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     char *arg;
     char *buffer = malloc(size);
     memcpy(buffer, data, size);
-    parse_client_input(buffer, size, &arg);
+    parse_sensor_input(buffer, size, &arg);
     free(buffer);
     return 0;
 }

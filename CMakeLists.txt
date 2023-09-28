@@ -41,12 +41,12 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(nervcenter PRIVATE CHALDEBUG)
 endif()
 
-# client_fuzzer executable
+# sensor_fuzzer executable
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-    add_executable(client_fuzzer fuzzers/client_fuzzer.c parsers.c)
-    target_compile_options(client_fuzzer PRIVATE -fsanitize=fuzzer,address)
-    target_link_options(client_fuzzer PRIVATE -fsanitize=fuzzer,address)
-    set_target_properties(client_fuzzer PROPERTIES
+    add_executable(sensor_fuzzer fuzzers/sensor_fuzzer.c parsers.c)
+    target_compile_options(sensor_fuzzer PRIVATE -fsanitize=fuzzer,address)
+    target_link_options(sensor_fuzzer PRIVATE -fsanitize=fuzzer,address)
+    set_target_properties(sensor_fuzzer PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/fuzzers"
     )
 endif()

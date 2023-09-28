@@ -21,7 +21,7 @@
 
 #define BUFFER_SIZE 1024
 #define CONTROL_PORT 2000
-#define CLIENT_PORT_BASE 2001
+#define SENSOR_PORT_BASE 2001
 #define PREFERRED_MAXFILES 1200
 #define KEY_SIZE 1024
 
@@ -30,8 +30,8 @@
 #include "base64.h"
 #include "parsers.h"
 
-// Lock for getting the client port
-pthread_mutex_t client_port_lock = PTHREAD_MUTEX_INITIALIZER;
+// Lock for getting the sensor port
+pthread_mutex_t sensor_port_lock = PTHREAD_MUTEX_INITIALIZER;
 
 unsigned long increase_fd_limit(unsigned long maxfiles) {
     // Try to increase open file limit
@@ -187,19 +187,19 @@ void easter_egg(int s) {
     sendvid(s, IMGDIR "/credits", 29.98);
 }
 
-void handle_client_input(int fd, char *buffer, size_t buflen, session_t *sess) {
+void handle_sensor_input(int fd, char *buffer, size_t buflen, session_t *sess) {
     char *arg = NULL;
-    client_command_t cmd = parse_client_input(buffer, buflen, &arg);
-    int cmd_int = cmd & ~CLIENT_CMD_INVALID;
-    int cmd_invalid = cmd & CLIENT_CMD_INVALID;
+    sensor_command_t cmd = parse_sensor_input(buffer, buflen, &arg);
+    int cmd_int = cmd & ~SENSOR_CMD_INVALID;
+    int cmd_invalid = cmd & SENSOR_CMD_INVALID;
     switch (cmd_int) {
-        case CLIENT_CMD_LIST:
+        case SENSOR_CMD_LIST:
             // Send the list of angels
             for (int i = 0; i < angel_list_len; i++) {
                 dprintf(fd, "%s\n", angel_list[i]);
             }
             break;
-        case CLIENT_CMD_EXAMINE:
+        case SENSOR_CMD_EXAMINE:
             if (cmd_invalid) {
                 dprintf(fd, "usage: EXAMINE <angel>\n");
                 break;
@@ -238,11 +238,11 @@ void handle_client_input(int fd, char *buffer, size_t buflen, session_t *sess) {
             }
             dprintf(fd, "Unknown angel '%s'\n", name);
             break;
-        case CLIENT_CMD_EMERGENCY:
+        case SENSOR_CMD_REPORT:
             // Show pending urgent data across all connections
             dprintf(fd, "Pending urgent data reported by our angel sensors:\n{\n");
             for (int i = 0; i <= sess->maxfds; i++) {
-                int cfd = sess->client_sockets[i];
+                int cfd = sess->sensor_sockets[i];
                 if (cfd == 0) continue;
                 if (FD_ISSET(cfd, &sess->exceptfds)) {
                     unsigned char oob = 0;
@@ -255,31 +255,31 @@ void handle_client_input(int fd, char *buffer, size_t buflen, session_t *sess) {
                         }
                     }
                     else {
-                        dprintf(fd, "  fd=%04d: '%c',\n", cfd, oob);
+                        dprintf(fd, "  Sensor %d: '%c',\n", cfd, oob);
                     }
                 }
             }
             dprintf(fd, "}\n");
             break;
-        case CLIENT_CMD_QUIT:
+        case SENSOR_CMD_QUIT:
             dprintf(fd, "Goodbye!\n");
             close(fd);
-            sess->client_sockets[fd] = 0;
+            sess->sensor_sockets[fd] = 0;
             break;
-        case CLIENT_CMD_HELP:
+        case SENSOR_CMD_HELP:
             dprintf(fd, "Available commands:\n");
             dprintf(fd, "LIST\n");
             dprintf(fd, "  List known angels.\n");
             dprintf(fd, "EXAMINE <angel>\n");
-            dprintf(fd, "  Examine an angel.\n");
-            dprintf(fd, "EMERGENCY\n");
-            dprintf(fd, "  Examine any urgent data.\n");
+            dprintf(fd, "  Examine readings captured about an angel.\n");
+            dprintf(fd, "REPORT\n");
+            dprintf(fd, "  Examine any urgent sensor data across the monitoring system.\n");
             dprintf(fd, "HELP\n");
             dprintf(fd, "  Show this help message.\n");
             dprintf(fd, "QUIT\n");
-            dprintf(fd, "  Disconnect this client.\n");
+            dprintf(fd, "  Disconnect this sensor.\n");
             break;
-        case CLIENT_CMD_UNKNOWN:
+        case SENSOR_CMD_UNKNOWN:
             dprintf(fd, "Unknown command\n");
             break;
     }
@@ -326,14 +326,14 @@ typedef struct {
     int should_pause;
     pthread_cond_t pause_cond;
     pthread_mutex_t pause_mutex;
-} client_thread_args;
+} sensor_thread_args;
 
-// Thread to handle client connections
-void *client_thread(void *arg) {
+// Thread to handle sensor connections
+void *sensor_thread(void *arg) {
     char buffer[BUFFER_SIZE+1] = {0};
-    client_thread_args *args = (client_thread_args *)arg;
+    sensor_thread_args *args = (sensor_thread_args *)arg;
     session_t *sess = args->sess;
-    sess->client_sockets = calloc(sess->maxfds, sizeof(int));
+    sess->sensor_sockets = calloc(sess->maxfds, sizeof(int));
 
     // Main loop: accept connections, add them to the set, and select
     while(1) {
@@ -344,7 +344,7 @@ void *client_thread(void *arg) {
 
         int i;
         for (i = 0; i < sess->maxfds; i++) {
-            int sd = sess->client_sockets[i];
+            int sd = sess->sensor_sockets[i];
             if (sd > 0) {
                 FD_SET(sd, &sess->readfds);
                 FD_SET(sd, &sess->exceptfds);
@@ -368,12 +368,12 @@ void *client_thread(void *arg) {
         int did_pause = 0;
         pthread_mutex_lock(&args->pause_mutex);
         while (args->should_pause) {
-            printf("[-] Client thread pausing\n");
+            printf("[-] Sensor thread pausing\n");
             did_pause = 1;
             pthread_cond_wait(&args->pause_cond, &args->pause_mutex);
         }
         pthread_mutex_unlock(&args->pause_mutex);
-        if (did_pause) printf("[+] Client thread resuming\n");
+        if (did_pause) printf("[+] Sensor thread resuming\n");
 
         // If the activity is on the server socket it means we have a new connection
         // Accept it
@@ -391,14 +391,15 @@ void *client_thread(void *arg) {
             fcntl(new_socket, F_SETFL, flags | O_NONBLOCK);
 
             // Send the initial prompt string
-            dprintf(new_socket, "Welcome to Emergency Angel Response interface.\n");
+            dprintf(new_socket, "Welcome to Angel sensor network interface.\n");
+            dprintf(new_socket, "This is sensor ID %d.\n", new_socket);
             dprintf(new_socket, "Type HELP for a list of commands.\n");
             dprintf(new_socket, "> ");
 
-            // Find a free slot in the client_sockets array
+            // Find a free slot in the sensor_sockets array
             for (i = 0; i < sess->maxfds; i++) {
-                if (sess->client_sockets[i] == 0) {
-                    sess->client_sockets[i] = new_socket;
+                if (sess->sensor_sockets[i] == 0) {
+                    sess->sensor_sockets[i] = new_socket;
                     break;
                 }
             }
@@ -409,27 +410,27 @@ void *client_thread(void *arg) {
         }
 monitor:
         for (int i = 0; i < sess->maxfds; i++) {
-            int sd = sess->client_sockets[i];
+            int sd = sess->sensor_sockets[i];
             if (sd == 0) continue;
             if (FD_ISSET(sd, &sess->readfds)) {
                 // printf("[+] Client fd=%d ready for read\n", sd);
                 ssize_t valread = read(sd, buffer, BUFFER_SIZE);
                 if (valread > 0) {
                     buffer[valread] = 0;
-                    handle_client_input(sd, buffer, valread, sess);
+                    handle_sensor_input(sd, buffer, valread, sess);
                     dprintf(sd, "> ");
                 }
                 else if (valread == 0) {
                     printf("[-] Client fd=%d disconnected\n", sd);
                     close(sd);
-                    sess->client_sockets[i] = 0;
+                    sess->sensor_sockets[i] = 0;
                 } else {
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         // This is fine, just means there's no data to read
                     } else {
                         perror("read");
                         close(sd);
-                        sess->client_sockets[i] = 0;
+                        sess->sensor_sockets[i] = 0;
                     }
                 }
             }
@@ -437,15 +438,15 @@ monitor:
 exit_check:
         // Check if we should exit
         if (atomic_load(&args->should_exit)) {
-            printf("[-] Client thread exiting\n");
+            printf("[-] Sensor thread exiting\n");
             // Cleanup
             for (int i = 0; i < sess->maxfds; i++) {
-                if (sess->client_sockets[i] > 0) {
-                    close(sess->client_sockets[i]);
+                if (sess->sensor_sockets[i] > 0) {
+                    close(sess->sensor_sockets[i]);
             }
             }
             close(sess->server_fd);
-            free(sess->client_sockets);
+            free(sess->sensor_sockets);
             pthread_exit(NULL);
         }
     }
@@ -537,12 +538,12 @@ int send_encrypted_data(int s, unsigned char *data, size_t data_len, session_t *
     return 1;
 }
 
-int unauth_menu(int s, session_t *sess, client_thread_args *client_args) {
+int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
     dprintf(s, "Main menu:\n");
     dprintf(s, "1. Authenticate\n");
     dprintf(s, "2. Print public key\n");
-    dprintf(s, "3. Pause client thread\n");
-    dprintf(s, "4. Resume client thread\n");
+    dprintf(s, "3. Issue sensor system halt\n");
+    dprintf(s, "4. Resume sensor operations\n");
     dprintf(s, "5. Exit\n");
     dprintf(s, "Enter your choice: ");
     char *pubkey;
@@ -570,17 +571,17 @@ int unauth_menu(int s, session_t *sess, client_thread_args *client_args) {
             free(pubkey);
             break;
         case 3:
-            pthread_mutex_lock(&client_args->pause_mutex);
-            client_args->should_pause = 1;
-            pthread_mutex_unlock(&client_args->pause_mutex);
-            dprintf(s, "Client thread paused\n");
+            pthread_mutex_lock(&sensor_args->pause_mutex);
+            sensor_args->should_pause = 1;
+            pthread_mutex_unlock(&sensor_args->pause_mutex);
+            dprintf(s, "Sensors are now on standby\n");
             break;
         case 4:
-            pthread_mutex_lock(&client_args->pause_mutex);
-            client_args->should_pause = 0;
-            pthread_cond_signal(&client_args->pause_cond);
-            pthread_mutex_unlock(&client_args->pause_mutex);
-            dprintf(s, "Client thread resumed\n");
+            pthread_mutex_lock(&sensor_args->pause_mutex);
+            sensor_args->should_pause = 0;
+            pthread_cond_signal(&sensor_args->pause_cond);
+            pthread_mutex_unlock(&sensor_args->pause_mutex);
+            dprintf(s, "Normal sensor operation resumed; sensors are receiving data.\n");
             break;
         case 5:
             dprintf(s, "Goodbye!\n");
@@ -592,7 +593,7 @@ int unauth_menu(int s, session_t *sess, client_thread_args *client_args) {
         case 1234:
             dprintf(s, "fd_bits = [ ");
             for (int i = 0; i <= sess->maxfds; i++) {
-                int cfd = sess->client_sockets[i];
+                int cfd = sess->sensor_sockets[i];
                 if (cfd == 0) continue;
                 if (FD_ISSET(cfd, &sess->exceptfds)) {
                     dprintf(s, "%d ", cfd);
@@ -612,7 +613,7 @@ int unauth_menu(int s, session_t *sess, client_thread_args *client_args) {
     return 1;
 }
 
-int auth_menu(int s, session_t *sess, client_thread_args *client_args) {
+int auth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
     dprintf(s, "Authenticated menu:\n");
     dprintf(s, "1. Send flag\n");
     dprintf(s, "2. Show credits\n");
@@ -685,40 +686,41 @@ void *control_thread(void *arg) {
     // Set their maxfds
     sess->maxfds = args->maxfiles;
 
-    // Find a free port for the client to connect to
-    pthread_mutex_lock(&client_port_lock);
-    unsigned short client_port = CLIENT_PORT_BASE;
-    int client_fd = -1;
-    while ((client_fd = open_server_port(client_port)) < 0) {
-        if (client_fd == -2) {
-            printf("[-] Failed to open client port %d\n", client_port);
-            pthread_mutex_unlock(&client_port_lock);
+    // Find a free port for the sensor to connect to
+    pthread_mutex_lock(&sensor_port_lock);
+    unsigned short sensor_port = SENSOR_PORT_BASE;
+    int sensor_fd = -1;
+    while ((sensor_fd = open_server_port(sensor_port)) < 0) {
+        if (sensor_fd == -2) {
+            printf("[-] Failed to open sensor port %d\n", sensor_port);
+            pthread_mutex_unlock(&sensor_port_lock);
             pthread_exit(NULL);
         }
         // Keep trying until we find a free port
-        client_port++;
+        sensor_port++;
     }
-    sess->server_fd = client_fd;
-    pthread_mutex_unlock(&client_port_lock);
+    sess->server_fd = sensor_fd;
+    pthread_mutex_unlock(&sensor_port_lock);
     // Force OOB data to be sent out of band, not inline
     int opt = 0;
     if (setsockopt(sess->server_fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof(opt))) {
         perror("setsockopt");
         pthread_exit(NULL);
     }
-    dprintf(new_socket, "Your very own port is %d\n", client_port);
+    dprintf(new_socket, "Session sensor port is: %d\n", sensor_port);
+    dprintf(new_socket, "You can connect to this port to view sensor data.\n");
 
-    // Spawn a thread to handle the client connections
+    // Spawn a thread to handle the sensor connections
     pthread_t thread;
-    client_thread_args *client_args = calloc(1, sizeof(client_thread_args));
-    client_args->sess = sess;
-    client_args->should_exit = 0;
-    client_args->should_pause = 0;
-    pthread_cond_init(&client_args->pause_cond, NULL);
-    pthread_mutex_init(&client_args->pause_mutex, NULL);
-    pthread_create(&thread, NULL, client_thread, client_args);
+    sensor_thread_args *sensor_args = calloc(1, sizeof(sensor_thread_args));
+    sensor_args->sess = sess;
+    sensor_args->should_exit = 0;
+    sensor_args->should_pause = 0;
+    pthread_cond_init(&sensor_args->pause_cond, NULL);
+    pthread_mutex_init(&sensor_args->pause_mutex, NULL);
+    pthread_create(&thread, NULL, sensor_thread, sensor_args);
     char threadname[16] = {0};
-    snprintf(threadname, sizeof(threadname), "client-%6d", client_port);
+    snprintf(threadname, sizeof(threadname), "sensor-%6d", sensor_port);
     pthread_setname_np(thread, threadname);
 
     // Server loop
@@ -726,28 +728,28 @@ void *control_thread(void *arg) {
         dprintf(new_socket, "Current authorization level: %s\n",
                 sess->authenticated ? "ADMIN" : "UNPRIVILEGED");
         if (sess->authenticated) {
-            if (!auth_menu(new_socket, sess, client_args)) {
+            if (!auth_menu(new_socket, sess, sensor_args)) {
                 break;
             }
         }
         else {
-            if (!unauth_menu(new_socket, sess, client_args)) {
+            if (!unauth_menu(new_socket, sess, sensor_args)) {
                 break;
             }
         }
     }
 
     close(new_socket);
-    // Unpause the client thread if it's paused
-    pthread_mutex_lock(&client_args->pause_mutex);
-    client_args->should_pause = 0;
-    pthread_cond_signal(&client_args->pause_cond);
-    pthread_mutex_unlock(&client_args->pause_mutex);
-    // Tell the client thread to exit
-    atomic_store(&client_args->should_exit, 1);
+    // Unpause the sensor thread if it's paused
+    pthread_mutex_lock(&sensor_args->pause_mutex);
+    sensor_args->should_pause = 0;
+    pthread_cond_signal(&sensor_args->pause_cond);
+    pthread_mutex_unlock(&sensor_args->pause_mutex);
+    // Tell the sensor thread to exit
+    atomic_store(&sensor_args->should_exit, 1);
     pthread_join(thread, NULL);
     free(sess);
-    free(client_args);
+    free(sensor_args);
     printf("[-] Control thread exiting\n");
     // Terminate this thread
     pthread_exit(NULL);
@@ -762,15 +764,15 @@ int main() {
     // Set up the angel list
     setup_angel_list();
 
-    // Ignore SIGPIPE so we don't crash when a client disconnects
+    // Ignore SIGPIPE so we don't crash when a sensor disconnects
     signal(SIGPIPE, SIG_IGN);
 
     int control_fd;
     printf("[+] Setting up control port\n");
     control_fd = open_server_port(CONTROL_PORT);
     // Accept connections in a loop. For each connection, generate a new RSA key
-    // and send the public key to the client, find a free port for the client to
-    // connect to, and spawn a thread to handle the client connections.
+    // and send the public key to the sensor, find a free port for the sensor to
+    // connect to, and spawn a thread to handle the sensor connections.
     while (1) {
         struct sockaddr_in address;
         int addrlen = sizeof(address);
