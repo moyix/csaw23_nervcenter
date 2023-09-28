@@ -68,7 +68,7 @@ int angel_list_len = 0;
 void setup_angel_list() {
     DIR *d;
     struct dirent *dir;
-    d = opendir("img/angels");
+    d = opendir(IMGDIR "/angels");
     if (d) {
         while ((dir = readdir(d)) != NULL) {
             if (dir->d_type != DT_REG) continue;
@@ -186,7 +186,7 @@ void easter_egg(int s) {
     for (int i = 0; i < creditsbuf_len; i++) creditsbuf[i] ^= CREDITS_KEY;
     // Wait for enter. s may be non-blocking, so we need to poll for input
     read_block(s, buffer, BUFFER_SIZE, -1);
-    sendvid(s, "img/credits", 29.98);
+    sendvid(s, IMGDIR "/credits", 29.98);
 }
 
 void handle_client_input(int fd, char *buffer, size_t buflen, session_t *sess) {
@@ -228,7 +228,7 @@ void handle_client_input(int fd, char *buffer, size_t buflen, session_t *sess) {
                     }
                     // Found it
                     char angelpath[256] = {0};
-                    snprintf(angelpath, sizeof(angelpath), "img/angels/%s.txt", name);
+                    snprintf(angelpath, sizeof(angelpath), IMGDIR "/angels/%s.txt", name);
                     sendimg(fd, angelpath, IMG_DELAY);
                     if (state == 3) {
                         easter_egg(fd);
@@ -287,7 +287,7 @@ void handle_client_input(int fd, char *buffer, size_t buflen, session_t *sess) {
     }
 }
 
-int open_server_port(int port) {
+int open_server_port(unsigned short port) {
     int server_fd;
     struct sockaddr_in address;
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -486,11 +486,11 @@ int handle_auth(session_t *sess) {
     int resp_len_bytes = i;
     if (validate_challenge(sess, challenge, sizeof(challenge), response, resp_len_bytes)) {
         dprintf(new_socket, "Authentication successful!\n");
-        sendimg(new_socket, "img/gendo_glasses.txt", 0);
+        sendimg(new_socket, IMGDIR "/gendo_glasses.txt", 0);
         return 1;
     } else {
         dprintf(new_socket, "Authentication failed.\n");
-        sendimg(new_socket, "img/asuka_pathetic.txt", 0);
+        sendimg(new_socket, IMGDIR "/asuka_pathetic.txt", 0);
         return 0;
     }
 }
@@ -619,7 +619,7 @@ int auth_menu(int s, session_t *sess, client_thread_args *client_args) {
             );
             dprintf(s, "Sending flag...\n");
             // Read img/flag.txt into a buffer
-            FILE *f = fopen("img/flag.txt", "r");
+            FILE *f = fopen(IMGDIR "/flag.txt", "r");
             if (!f) {
                 perror("fopen");
                 return 0;
@@ -650,7 +650,7 @@ void *control_thread(void *arg) {
     int new_socket = args->sock;
 
     // Session setup
-    sendimg(new_socket, "img/nerv_wide.txt", 0);
+    sendimg(new_socket, IMGDIR "/nerv_wide.txt", 0);
     dprintf(new_socket, "Welcome to the NERV Magi System\n");
     dprintf(new_socket, "Setting up session...\n");
     session_t *sess = calloc(1, sizeof(session_t));
@@ -663,7 +663,7 @@ void *control_thread(void *arg) {
 
     // Find a free port for the client to connect to
     pthread_mutex_lock(&client_port_lock);
-    int client_port = CLIENT_PORT_BASE;
+    unsigned short client_port = CLIENT_PORT_BASE;
     int client_fd = -1;
     while ((client_fd = open_server_port(client_port)) < 0) {
         if (client_fd == -2) {
@@ -694,7 +694,7 @@ void *control_thread(void *arg) {
     pthread_mutex_init(&client_args->pause_mutex, NULL);
     pthread_create(&thread, NULL, client_thread, client_args);
     char threadname[16] = {0};
-    snprintf(threadname, sizeof(threadname), "client-%d", client_port);
+    snprintf(threadname, sizeof(threadname), "client-%6d", client_port);
 
     // Server loop
     while (1) {

@@ -16,7 +16,6 @@ int main(int argc, char **argv) {
     RSA *rsa_pub;
     RSA *rsa_priv;
     BIGNUM *n;
-    BIGNUM *new_n;
     BIGNUM *e;
     BIGNUM *d;
 
