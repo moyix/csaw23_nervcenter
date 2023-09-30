@@ -15,8 +15,9 @@ typedef struct {
     unsigned long maxfds;
     int *sensor_sockets;
     int nfds;
+    pthread_mutex_t sensor_lock;
     fd_set readfds;
-    // fd_set writefds;
+    fd_set writefds;
     fd_set exceptfds;
     unsigned char pubkey[RSA_KEY_SIZE/8];
 } session_t;

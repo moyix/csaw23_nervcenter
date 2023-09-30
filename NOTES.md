@@ -76,17 +76,21 @@ Scenario is a terminal interface to the [Magi supercomputers from Evangelion](ht
 
 # TODO
 
-- Check for fd leaks. Ideally don't want to have to restart the whole server just so that the fds all get cleaned up
 - Check w/ CSAW infra people to make sure this port setup is ok
 - Bling up that UI [IN PROGRESS]
 - Add administrator menu with some goodies (including flag) [MOSTLY DONE]
-- Test the multi-bit vs the sequential solver
-
-- Consider other functionality for client thread, like actually reading the OOB data (allows bits to be cleared instead of just set)
 - Playtest. Too hard? Too easy?
-- Sanity checks on key (ban leading zeros?)
-- Hook up a debugger - *why* are all 8 bits getting cleared?
-    - Happening inside the kernel, don't exactly know how. Not under our control, though.
+- Fuzz, tests, everything you can think of. This thing is a LOT of C code... [IN PROGRESS]
+- Finish and test byte extension variant of the chal
 
 # Done
-    - Maybe the flag should be transmitted as an image encrypted with the (corrupted) private key? [DONE]
+
+- Consider other functionality for client thread, like actually reading the OOB data (allows bits to be cleared instead of just set) [DONE]
+- Test the multi-bit vs the sequential solver
+    - DONE; sequential is slightly more reliable
+- Sanity checks on key (ban leading zeros?) [DONE]
+- Check for fd leaks. Ideally don't want to have to restart the whole server just so that the fds all get cleaned up [DONE]
+- Maybe the flag should be transmitted as an image encrypted with the (corrupted) private key? [DONE]
+- Hook up a debugger - *why* are all 8 bits getting cleared?
+    - Happening inside the kernel, don't exactly know how. Not under our control, though.
+    - Done I guess?

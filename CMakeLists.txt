@@ -12,6 +12,8 @@ project(nervcenter_project LANGUAGES C CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+set(CMAKE_CXX_OUTPUT_EXTENSION_REPLACE ON)
+
 # This file provides a custom build type, `CMAKE_BUILD_TYPE_ASAN`
 set(CMAKE_C_FLAGS_ASAN "${CMAKE_C_FLAGS_RELWITHDEBINFO} -fsanitize=address -fno-omit-frame-pointer -fno-common" CACHE STRING "" FORCE)
 set(CMAKE_CXX_FLAGS_ASAN "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -fsanitize=address -fno-omit-frame-pointer -fno-common" CACHE STRING "" FORCE)
@@ -24,7 +26,24 @@ set(CMAKE_CXX_FLAGS_UBSAN "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -fsanitize=undefine
 set(CMAKE_EXE_LINKER_FLAGS_UBSAN "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} -fsanitize=undefined" CACHE STRING "" FORCE)
 set(CMAKE_SHARED_LINKER_FLAGS_UBSAN "${CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO} -fsanitize=undefined" CACHE STRING "" FORCE)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_C_FLAGS_COVERAGE "${CMAKE_C_FLAGS} -fprofile-instr-generate -fcoverage-mapping")
+    set(CMAKE_CXX_FLAGS_COVERAGE "${CMAKE_CXX_FLAGS} -fprofile-instr-generate -fcoverage-mapping")
+    set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "${CMAKE_EXE_LINKER_FLAGS} -fprofile-instr-generate -fcoverage-mapping")
+endif()
+
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo" "ASan" "UBSan")
+
+# Get the current list of build types
+get_property(current_build_types CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS)
+
+# Conditionally append "Coverage" if the compiler is Clang
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+    list(APPEND current_build_types "Coverage")
+endif()
+
+# Set the modified list back
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS ${current_build_types})
 
 # Set the C standard
 set(CMAKE_C_STANDARD 11)
@@ -34,16 +53,22 @@ set(CMAKE_C_EXTENSIONS ON)
 # Common Compiler Flags
 add_compile_options(-pthread -D_GNU_SOURCE -Wall)
 
-# Use FindOpenSSL to locate OpenSSL libraries
+# OpenSSL
 find_package(OpenSSL REQUIRED)
+
+# zlib
+find_package(ZLIB REQUIRED)
 
 # libgmp for brent
 find_package(GMP REQUIRED)
 
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
 # nervcenter executable
-add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c)
-target_compile_definitions(nervcenter PRIVATE -DIMGDIR="${CMAKE_SOURCE_DIR}/img")
-target_link_libraries(nervcenter PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread gcc_s)
+add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c generated/imgresource.c)
+target_compile_definitions(nervcenter PRIVATE -DIMGDIR="${CMAKE_SOURCE_DIR}/release_images")
+target_include_directories(nervcenter PRIVATE ${ZLIB_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(nervcenter PRIVATE OpenSSL::Crypto pthread gcc_s ${ZLIB_LIBRARIES})
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(nervcenter PRIVATE CHALDEBUG)
@@ -94,16 +119,18 @@ set_target_properties(decryptmessage PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/solver"
 )
 
-# Custom command for credits unpacking
+# Enable testing
+enable_testing()
+
+# Add the tests subdirectory
+add_subdirectory(tests)
+
+# Add the util subdirectory
+add_subdirectory(util)
+
 add_custom_command(
-    OUTPUT img/credits/frame_00000001.txt
-    COMMAND tar xf ${CMAKE_SOURCE_DIR}/img/credits.tar.xz
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-)
-
-add_custom_target(unpack_credits DEPENDS img/credits/frame_00000001.txt)
-
-add_custom_target(repack_credits
-    COMMAND rm -f ${CMAKE_SOURCE_DIR}/img/credits.tar.xz
-    COMMAND tar cJf ${CMAKE_SOURCE_DIR}/img/credits.tar.xz ${CMAKE_SOURCE_DIR}/img/credits/frame_*.txt
+  OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.c ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.h
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images img ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource image_blob
+  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images ${CMAKE_CURRENT_SOURCE_DIR}/img/credits/frame_00000001.txt
 )

@@ -18,6 +18,7 @@
 #include <execinfo.h>
 #include <dirent.h>
 #include <poll.h>
+#include <sys/stat.h>
 
 #define BUFFER_SIZE 1024
 #define CONTROL_PORT 2000
@@ -29,9 +30,18 @@
 #include "rsautil.h"
 #include "base64.h"
 #include "parsers.h"
+#include "resources.h"
+#include "generated/imgresource.h"
 
 // Lock for getting the sensor port
 pthread_mutex_t sensor_port_lock = PTHREAD_MUTEX_INITIALIZER;
+
+const char *angel_list[] = {
+    "Adam", "Arael", "Armisael", "Bardiel", "Gaghiel", "Ireul",
+    "Israfel", "Leliel", "Lilith", "Matarael", "Ramiel", "Sachiel",
+    "Sahaquiel", "Sandalphon", "Shamshel", "Tabris", "Zeruel",
+};
+int angel_list_len = 17;
 
 // Signal handler for SIGUSR1, which just calls exit() so we can get leak info
 void sigusr1_handler(int signum) {
@@ -66,118 +76,189 @@ unsigned long increase_fd_limit(unsigned long maxfiles) {
     return rlim.rlim_cur;
 }
 
-char *angel_list[32];
-int angel_list_len = 0;
-void setup_angel_list() {
-    DIR *d;
-    struct dirent *dir;
-    d = opendir(IMGDIR "/angels");
-    if (d) {
-        while ((dir = readdir(d)) != NULL) {
-            if (dir->d_type != DT_REG) continue;
-            // Strip off the .txt extension
-            char *ext = strstr(dir->d_name, ".txt");
-            if (ext) *ext = 0;
-            angel_list[angel_list_len++] = strdup(dir->d_name);
+void render_fdline(int fd, int i, fd_set *s, int maxfds) {
+    // unicode block elements to represent 0..15:
+    // ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█'
+    const unsigned char blocks[16][3] = {
+        { 0x00, 0x00, 0x00 },
+        { 0xe2, 0x96, 0x98 },
+        { 0xe2, 0x96, 0x9d },
+        { 0xe2, 0x96, 0x80 },
+        { 0xe2, 0x96, 0x96 },
+        { 0xe2, 0x96, 0x8c },
+        { 0xe2, 0x96, 0x9e },
+        { 0xe2, 0x96, 0x9b },
+        { 0xe2, 0x96, 0x97 },
+        { 0xe2, 0x96, 0x9a },
+        { 0xe2, 0x96, 0x90 },
+        { 0xe2, 0x96, 0x9c },
+        { 0xe2, 0x96, 0x84 },
+        { 0xe2, 0x96, 0x99 },
+        { 0xe2, 0x96, 0x9f },
+        { 0xe2, 0x96, 0x88 },
+    };
+
+    // set color to red
+    dprintf(fd, "\033[31m");
+    for (int j = 0; j < 128; j += 4) {
+        int box_idx = 0;
+        for (int k = 0; k < 4; k++) {
+            if (i + j + k >= maxfds) break;
+            if (FD_ISSET(i + j + k, s)) {
+                box_idx |= 1 << k;
+            }
         }
-        closedir(d);
+        if (box_idx == 0) {
+            dprintf(fd, " ");
+        }
+        else {
+            write(fd, blocks[box_idx], 3);
+        }
     }
+    // reset color
+    dprintf(fd, "\033[0m");
 }
 
-int strptrcmp(const void *a, const void *b) {
-    return strcmp(*(char **)a, *(char **)b);
+// Draw the three fd_sets using the unicode block elements
+void render_fdset(int fd, session_t *s) {
+    const unsigned char spacer[32];
+    const unsigned char vertical_line[] = { 0xe2, 0x95, 0x91 };
+    const unsigned char left_diag[] = { 0xe2, 0x95, 0xb1 };
+    const unsigned char right_diag[] = { 0xe2, 0x95, 0xb2 };
+    const unsigned char casper[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x43, 0x41, 0x53, 0x50, 0x45, 0x52, 0x2d, 0x33, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
+    const unsigned char balthasar[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x42, 0x41, 0x4c, 0x54, 0x48, 0x41, 0x53, 0x41, 0x52, 0x2d, 0x32, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
+    const unsigned char melchior[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x4d, 0x45, 0x4c, 0x43, 0x48, 0x49, 0x4f, 0x52, 0x2d, 0x31, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
+    const unsigned char bottom[] = { 0xe2, 0x95, 0x9a, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x9d };
+    const unsigned char bar[] = { 0xe2, 0x95, 0xa0, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0xa3 };
+    memset((void *)spacer, ' ', sizeof(spacer));
+
+    pthread_mutex_lock(&s->sensor_lock);
+
+    // Balthasar
+    write(fd, spacer, 24);
+    write(fd, balthasar, sizeof(balthasar));
+    dprintf(fd, "\n");
+    for (int i = 0; i < s->maxfds; i += 128) {
+        write(fd, spacer, 24);
+        write(fd, vertical_line, sizeof(vertical_line));
+        render_fdline(fd, i, &s->readfds, s->maxfds);
+        write(fd, vertical_line, sizeof(vertical_line));
+        dprintf(fd, "\n");
+    }
+    write(fd, spacer, 24);
+    write(fd, bottom, sizeof(bottom));
+    dprintf(fd, "\n");
+    // Diagonal connectors
+    write(fd, spacer, 31);
+    write(fd, left_diag, sizeof(left_diag));
+    write(fd, spacer, 18);
+    write(fd, right_diag, sizeof(right_diag));
+    dprintf(fd, "\n");
+    write(fd, spacer, 30);
+    write(fd, left_diag, sizeof(left_diag));
+    write(fd, spacer, 20);
+    write(fd, right_diag, sizeof(right_diag));
+    dprintf(fd, "\n");
+
+    // Casper and Melchior
+    write(fd, spacer, 2);
+    write(fd, casper, sizeof(casper));
+    write(fd, spacer, 10);
+    write(fd, melchior, sizeof(melchior));
+    dprintf(fd, "\n");
+    for (int i = 0; i < s->maxfds; i += 128) {
+        write(fd, spacer, 2);
+        write(fd, vertical_line, sizeof(vertical_line));
+        render_fdline(fd, i, &s->writefds, s->maxfds);
+        if (i == 512) {
+            write(fd, bar, sizeof(bar));
+        }
+        else {
+            write(fd, vertical_line, sizeof(vertical_line));
+            write(fd, spacer, 10);
+            write(fd, vertical_line, sizeof(vertical_line));
+        }
+        render_fdline(fd, i, &s->exceptfds, s->maxfds);
+        write(fd, vertical_line, sizeof(vertical_line));
+        dprintf(fd, "\n");
+    }
+    write(fd, spacer, 2);
+    write(fd, bottom, sizeof(bottom));
+    write(fd, spacer, 10);
+    write(fd, bottom, sizeof(bottom));
+    dprintf(fd, "\n");
+    pthread_mutex_unlock(&s->sensor_lock);
 }
 
 // Small delay when sending images to let them scroll by
 #define IMG_DELAY 15000
-void sendimg(int fd, const char *path, int delay) {
-    // printf("[+] Sending image %s\n", path);
-    FILE *img = fopen(path, "r");
-    if (!img) {
-        fprintf(stderr, "[-] Failed to open %s: ", path);
-        perror("fopen");
-        return;
+int sendimg(int fd, const char *path, int delay) {
+    unsigned char *imgbuf;
+    size_t imglen;
+    if (get_image(path, &imgbuf, &imglen) == -1) {
+        printf("[!] Failed to load image: %s\n", path);
+        return -1;
     }
-    // Read the file line by line with getline and send it
-    char *line = NULL;
-    size_t len = 0;
-    ssize_t nread;
-    while ((nread = getline(&line, &len, img)) != -1) {
-        // printf("Sending line: %s", line);
-        dprintf(fd, "%s", line);
+    // Read the buffer line by line and send it
+    unsigned char *ptr = imgbuf;
+    unsigned char *end = ptr + imglen;
+    while (ptr < end) {
+        size_t len = 0;
+        // get the length of the line
+        while (ptr < end && ptr[len] != '\n') len++;
+        if (ptr < end) len++; // include the newline
+        write(fd, ptr, len);
+        // advance the pointer past the line
+        ptr += len;
 #ifndef CHALDEBUG
-        if (delay) usleep(delay);
+        usleep(delay);
 #endif
     }
-    free(line);
-    fclose(img);
+    return 0;
 }
 
-void sendvid(int fd, const char *fullpath, float fps) {
-    // list the files in the directory
-    int n_frames = 0;
-    int capacity = 0;
-    char **framelist = NULL;
-    DIR *d;
-    struct dirent *dir;
-    d = opendir(fullpath);
-    if (d) {
-        while ((dir = readdir(d)) != NULL) {
-            if (dir->d_type != DT_REG) continue;
-            // Skip non-.txt files
-            if (strstr(dir->d_name, ".txt") == NULL) continue;
-            if (n_frames == capacity) {
-                if (capacity == 0)
-                    capacity = 16;
-                else
-                    capacity *= 2;
-                framelist = realloc(framelist, capacity * sizeof(char *));
-            }
-            // Save the name as the full path so we don't have to keep appending it
-            char *name = malloc(strlen(fullpath) + strlen(dir->d_name) + 2);
-            snprintf(name, strlen(fullpath) + strlen(dir->d_name) + 2, "%s/%s", fullpath, dir->d_name);
-            framelist[n_frames++] = name;
-        }
-        closedir(d);
-    }
-    // Sort the frames
-    qsort(framelist, n_frames, sizeof(char *), strptrcmp);
+int sendvid(int fd, const char *fullpath, float fps) {
+    // frames start at 1
+    int n_frames = 1;
     // Send clear screen and hide cursor commands
     dprintf(fd, "\033[H\033[2J\033[3J"); // clear screen
     dprintf(fd, "\033[?25l");            // hide cursor
     // Send the frames
     float frametime = 1.0 / fps;
     suseconds_t usec = frametime * 1000000;
-    for (int i = 0; i < n_frames; i++) {
+    while (1) {
         // Time the call to sendimg to calculate correct delay
         struct timeval start, end;
         gettimeofday(&start, NULL);
-        sendimg(fd, framelist[i], 0);
+        char path[256] = {0};
+        snprintf(path, sizeof(path), "%s/frame_%08d.txt", fullpath, n_frames);
+        if (sendimg(fd, path, 0) == -1) {
+            break;
+        }
         gettimeofday(&end, NULL);
         suseconds_t elapsed = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
         if (elapsed < usec) {
             usleep(usec - elapsed);
         }
+        n_frames++;
     }
     // Send show cursor command
     dprintf(fd, "\033[?25h");     // show cursor
     // Reset the terminal
     dprintf(fd, "\033c");
     dprintf(fd, "\033[H\033[2J\033[3J");
-
-    // Free the framelist
-    for (int i = 0; i < n_frames; i++) {
-        free(framelist[i]);
-    }
-    free(framelist);
+    return n_frames;
 }
 
-void read_block(int s, char *buffer, size_t size, int timeout) {
+int read_block(int s, char *buffer, size_t size, int timeout) {
     // Poll any pending input with a short timeout
     struct pollfd pfd = { .fd = s, .events = POLLIN, };
     poll(&pfd, 1, timeout);
     if (pfd.revents & POLLIN) {
-        read(s, buffer, BUFFER_SIZE);
+        return read(s, buffer, BUFFER_SIZE);
+    }
+    else {
+        return 0;
     }
 }
 
@@ -192,7 +273,7 @@ void easter_egg(int s) {
     for (int i = 0; i < creditsbuf_len; i++) creditsbuf[i] ^= CREDITS_KEY;
     // Wait for enter. s may be non-blocking, so we need to poll for input
     read_block(s, buffer, BUFFER_SIZE, -1);
-    sendvid(s, IMGDIR "/credits", 29.98);
+    sendvid(s, "./credits", 29.98);
 }
 
 void handle_sensor_input(int fd, char *buffer, size_t buflen, session_t *sess) {
@@ -234,7 +315,7 @@ void handle_sensor_input(int fd, char *buffer, size_t buflen, session_t *sess) {
                     }
                     // Found it
                     char angelpath[256] = {0};
-                    snprintf(angelpath, sizeof(angelpath), IMGDIR "/angels/%s.txt", name);
+                    snprintf(angelpath, sizeof(angelpath), "./angels/%s.txt", name);
                     sendimg(fd, angelpath, IMG_DELAY);
                     if (state == 3) {
                         easter_egg(fd);
@@ -345,10 +426,14 @@ void *sensor_thread(void *arg) {
     sensor_thread_args *args = (sensor_thread_args *)arg;
     session_t *sess = args->sess;
     sess->sensor_sockets = calloc(sess->maxfds, sizeof(int));
+    struct timeval tv;
 
     // Main loop: accept connections, add them to the set, and select
     while(1) {
+        usleep(100);
+        pthread_mutex_lock(&sess->sensor_lock);
         FD_ZERO(&sess->readfds);
+        FD_ZERO(&sess->writefds);
         FD_ZERO(&sess->exceptfds);
         FD_SET(sess->server_fd, &sess->readfds);
         sess->nfds = sess->server_fd;
@@ -358,6 +443,7 @@ void *sensor_thread(void *arg) {
             int sd = sess->sensor_sockets[i];
             if (sd > 0) {
                 FD_SET(sd, &sess->readfds);
+                FD_SET(sd, &sess->writefds);
                 FD_SET(sd, &sess->exceptfds);
             }
             if (sd > sess->nfds) sess->nfds = sd;
@@ -365,11 +451,10 @@ void *sensor_thread(void *arg) {
         int new_socket;
         // This will block until something happens
         // select timeout
-        struct timeval tv = {
-            .tv_sec = 0,
-            .tv_usec = 100000, // 100ms
-        };
-        int activity = select(sess->nfds + 1, &sess->readfds, NULL, &sess->exceptfds, &tv);
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000; // 1ms
+        int activity = select(sess->nfds + 1, &sess->readfds, &sess->writefds, &sess->exceptfds, &tv);
+        pthread_mutex_unlock(&sess->sensor_lock);
         // if we timed out, just go back to the top of the loop after checking if we should exit
         if (activity == 0) {
             goto exit_check;
@@ -501,28 +586,28 @@ int handle_auth(session_t *sess) {
     rsa_error_t res = validate_challenge(sess, challenge, sizeof(challenge), response, resp_len_bytes);
     if (res == RERR_OK) {
         dprintf(new_socket, "Authentication successful!\n");
-        sendimg(new_socket, IMGDIR "/gendo_glasses.txt", 0);
+        sendimg(new_socket, "./gendo_glasses.txt", 0);
         return 1;
     } else {
         dprintf(new_socket, "Authentication failed.\n");
         if (res == RERR_BADSIG) {
-            sendimg(new_socket, IMGDIR "/shinji.txt", 0);
+            sendimg(new_socket, "./shinji.txt", 0);
             dprintf(new_socket, "Invalid signature\n");
         }
         else if (res == RERR_EVEN_KEY) {
-            sendimg(new_socket, IMGDIR "/misato.txt", 0);
+            sendimg(new_socket, "./misato.txt", 0);
             dprintf(new_socket, "Invalid key: modulus is even\n");
         }
         else if (res == RERR_KEY_TOO_LARGE) {
-            sendimg(new_socket, IMGDIR "/ritsuko.txt", 0);
+            sendimg(new_socket, "./ritsuko.txt", 0);
             dprintf(new_socket, "Invalid key: too large\n");
         }
         else if (res == RERR_KEY_TOO_SMALL) {
-            sendimg(new_socket, IMGDIR "/asuka_pathetic.txt", 0);
+            sendimg(new_socket, "./asuka_pathetic.txt", 0);
             dprintf(new_socket, "Invalid key: too small\n");
         }
         else {
-            sendimg(new_socket, IMGDIR "/asuka.txt", 0);
+            sendimg(new_socket, "./asuka.txt", 0);
             dprintf(new_socket, "Unknown error: %d\n", res);
         }
         return 0;
@@ -559,7 +644,8 @@ int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
     dprintf(s, "2. Print public key\n");
     dprintf(s, "3. Issue sensor system halt\n");
     dprintf(s, "4. Resume sensor operations\n");
-    dprintf(s, "5. Exit\n");
+    dprintf(s, "5. MAGI status\n");
+    dprintf(s, "6. Exit\n");
     dprintf(s, "Enter your choice: ");
     char *pubkey;
     char buffer[BUFFER_SIZE+1] = {0};
@@ -599,6 +685,16 @@ int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
             dprintf(s, "Normal sensor operation resumed; sensors are receiving data.\n");
             break;
         case 5:
+            dprintf(s, "\033[H\033[2J\033[3J");
+            dprintf(s, "\033[?25l");            // hide cursor
+            do {
+                dprintf(s, "\033[H");
+                render_fdset(s, sess);
+                dprintf(s, "Monitoring, press enter to return to the main menu...\n");
+            } while (read_block(s, buffer, BUFFER_SIZE, 100) == 0);
+            dprintf(s, "\033[?25h");     // show cursor
+            break;
+        case 6:
             dprintf(s, "Goodbye!\n");
             return 0;
 #ifdef CHALDEBUG
@@ -659,7 +755,7 @@ int auth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
             );
             dprintf(s, "Sending flag...\n");
             // Read img/flag.txt into a buffer
-            FILE *f = fopen(IMGDIR "/flag.txt", "r");
+            FILE *f = fopen("flag.txt", "r");
             if (!f) {
                 perror("fopen");
                 return 0;
@@ -691,11 +787,12 @@ void *control_thread(void *arg) {
     int new_socket = args->sock;
 
     // Session setup
-    sendimg(new_socket, IMGDIR "/nerv_wide.txt", 0);
+    sendimg(new_socket, "./nerv_wide.txt", 0);
     dprintf(new_socket, "Welcome to the NERV Magi System\n");
     dprintf(new_socket, "Setting up session...\n");
     session_t *sess = calloc(1, sizeof(session_t));
     sess->control_fd = new_socket;
+    pthread_mutex_init(&sess->sensor_lock, NULL);
     // Generate a new RSA key
     rsa_setup(sess);
 
@@ -784,8 +881,10 @@ int main() {
     unsigned long maxfiles = increase_fd_limit(PREFERRED_MAXFILES);
     printf("[+] Max files is %lu\n", maxfiles);
 
-    // Set up the angel list
-    setup_angel_list();
+    // Unpack the images
+    if (load_image_resources(image_blob, image_blob_size) != 0) {
+        return 1;
+    }
 
     int control_fd;
     printf("[+] Setting up control port\n");
@@ -812,6 +911,8 @@ int main() {
         sprintf(threadname, "control-%d", new_socket);
         pthread_setname_np(thread, threadname);
     }
+
+    unload_image_resources();
 
     return 0;
 }
