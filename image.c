@@ -1,6 +1,6 @@
 #include <stddef.h>
 
-#include "generated/imgresource.h"
+#include "imgresource.h"
 #include "resources.h"
 
 static resource_table *image_resources = NULL;

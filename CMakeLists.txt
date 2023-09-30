@@ -64,9 +64,14 @@ find_package(GMP REQUIRED)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+# Generate the paths for the generated files in the build directory
+set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(IMGRESOURCE_C ${GENERATED_DIR}/imgresource.c)
+set(IMGRESOURCE_H ${GENERATED_DIR}/imgresource.h)
+
 # nervcenter executable
-add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c image.c generated/imgresource.c)
-target_include_directories(nervcenter PRIVATE ${ZLIB_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR})
+add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c image.c ${IMGRESOURCE_C})
+target_include_directories(nervcenter PRIVATE ${ZLIB_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${GENERATED_DIR})
 target_link_libraries(nervcenter PRIVATE OpenSSL::Crypto pthread gcc_s ${ZLIB_LIBRARIES})
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
@@ -135,8 +140,11 @@ add_custom_command(
 )
 
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.c ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.h
+    OUTPUT ${IMGRESOURCE_C} ${IMGRESOURCE_H}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images img ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource image_blob
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images img ${GENERATED_DIR}/imgresource image_blob
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images ${CMAKE_CURRENT_SOURCE_DIR}/img/credits/frame_00000001.txt
 )
+
+# Make sure the directory exists before generating files into it.
+file(MAKE_DIRECTORY ${GENERATED_DIR})
