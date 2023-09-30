@@ -65,8 +65,7 @@ find_package(GMP REQUIRED)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # nervcenter executable
-add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c generated/imgresource.c)
-target_compile_definitions(nervcenter PRIVATE -DIMGDIR="${CMAKE_SOURCE_DIR}/release_images")
+add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c image.c generated/imgresource.c)
 target_include_directories(nervcenter PRIVATE ${ZLIB_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(nervcenter PRIVATE OpenSSL::Crypto pthread gcc_s ${ZLIB_LIBRARIES})
 

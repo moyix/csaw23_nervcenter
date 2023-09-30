@@ -47,9 +47,8 @@ int pack_dir(const char *path, unsigned char **out, size_t *out_size, progress_c
 
 // unpack a blob into a directory
 int unpack_blob(const char *path, const unsigned char *blob, size_t blob_size, size_t *out_size, progress_callback cb);
-
-// load a resource table from a blob
-int load_image_resources(const unsigned char *blob, size_t blob_size);
-void unload_image_resources();
-int get_image(const char *name, unsigned char **data, uint64_t *size);
-void list_images();
+int unpack_blob_to_table(const unsigned char *blob, size_t blob_size, resource_table *table, progress_callback cb);
+resource_table *resource_table_init(uint64_t size);
+void resource_table_free(resource_table *table);
+void resource_table_print(resource_table *table);
+resource_entry *resource_table_get(resource_table *table, const char *name);

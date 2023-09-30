@@ -7,9 +7,6 @@
 #include <errno.h>
 
 #include "resources.h"
-#include "imgresource.h"
-
-static resource_table *image_resources = NULL;
 
 static int compress_file(const char *filepath, unsigned char **compressed_data, uint64_t *compressed_size) {
     FILE *file = fopen(filepath, "rb");
@@ -332,38 +329,4 @@ int unpack_blob_to_table(const unsigned char *blob, size_t blob_size, resource_t
     }
 
     return Z_OK;
-}
-
-int load_image_resources(const unsigned char *blob, size_t blob_size) {
-    if (image_resources) return 0;
-
-    image_resources = resource_table_init(4096);
-    if (unpack_blob_to_table(blob, blob_size, image_resources, NULL) != Z_OK) {
-        return -1;
-    }
-
-    return 0;
-}
-
-void unload_image_resources(void) {
-    if (!image_resources) return;
-
-    resource_table_free(image_resources);
-    image_resources = NULL;
-}
-
-int get_image(const char *name, unsigned char **data, uint64_t *size) {
-    if (!image_resources) return -1;
-
-    resource_entry *entry = resource_table_get(image_resources, name);
-    if (!entry) return -1;
-
-    *data = entry->data;
-    *size = entry->size;
-    return 0;
-}
-
-void list_images() {
-    if (!image_resources) return;
-    resource_table_print(image_resources);
 }

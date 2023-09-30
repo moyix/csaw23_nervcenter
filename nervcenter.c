@@ -31,7 +31,7 @@
 #include "base64.h"
 #include "parsers.h"
 #include "resources.h"
-#include "generated/imgresource.h"
+#include "image.h"
 
 // Lock for getting the sensor port
 pthread_mutex_t sensor_port_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -430,6 +430,8 @@ void *sensor_thread(void *arg) {
 
     // Main loop: accept connections, add them to the set, and select
     while(1) {
+        // Ugly: if we don't sleep here and there are no connections, the thread will spin
+        // and prevent render_fdset from getting the lock
         usleep(100);
         pthread_mutex_lock(&sess->sensor_lock);
         FD_ZERO(&sess->readfds);
@@ -882,7 +884,7 @@ int main() {
     printf("[+] Max files is %lu\n", maxfiles);
 
     // Unpack the images
-    if (load_image_resources(image_blob, image_blob_size) != 0) {
+    if (load_image_resources() != 0) {
         return 1;
     }
 

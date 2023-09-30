@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RESOURCE_GEN
 #include "resources.h"
 
 int packcb(const char *path, uint64_t bytes_in, uint64_t bytes_out, resource_cb_type cb_type) {
