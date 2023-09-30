@@ -128,8 +128,15 @@ add_subdirectory(tests)
 add_subdirectory(util)
 
 add_custom_command(
-  OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.c ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.h
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images img ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource image_blob
-  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images ${CMAKE_CURRENT_SOURCE_DIR}/img/credits/frame_00000001.txt
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/img/credits/frame_00000001.txt
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND tar -xf img/credits.tar.xz
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/img/credits.tar.xz
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.c ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource.h
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images img ${CMAKE_CURRENT_SOURCE_DIR}/generated/imgresource image_blob
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images ${CMAKE_CURRENT_SOURCE_DIR}/img/credits/frame_00000001.txt
 )
