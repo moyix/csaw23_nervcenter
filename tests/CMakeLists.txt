@@ -9,6 +9,7 @@ macro(add_test_program TESTNAME TESTSRCS_LIST TESTINCS_LIST TESTLIBS_LIST)
     add_test(${TESTNAME} ${TESTNAME})
 endmacro(add_test_program)
 
-add_test_program(test_pack ../resources.c "${ZLIB_INCLUDE_DIRS}" "${ZLIB_LIBRARIES}")
+add_test_program(test_pack "../resources.c;${IMGRESOURCE_C}" "${ZLIB_INCLUDE_DIRS}" "${ZLIB_LIBRARIES}")
 add_test_program(test_rsa_sig "../rsautil.c;../base64.c" "${OPENSSL_INCLUDE_DIR}" OpenSSL::Crypto)
 add_test_program(test_rsa_enc "../rsautil.c;../base64.c" "${OPENSSL_INCLUDE_DIR}" OpenSSL::Crypto)
+add_test_program(test_ui "../ui.c;${MAGI_UI_C}" "${GENERATED_DIR}" "")

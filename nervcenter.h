@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sys/select.h>
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {

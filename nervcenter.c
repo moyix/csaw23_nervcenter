@@ -33,6 +33,7 @@
 #include "resources.h"
 #include "image.h"
 #include "ui.h"
+#include "magi_ui.h"
 
 // Lock for getting the sensor port
 pthread_mutex_t sensor_port_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -573,16 +574,18 @@ int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
             pthread_mutex_unlock(&sensor_args->pause_mutex);
             dprintf(s, "Normal sensor operation resumed; sensors are receiving data.\n");
             break;
-        case 5:
+        case 5: {
             dprintf(s, "\033[H\033[2J\033[3J");
             dprintf(s, "\033[?25l");            // hide cursor
             do {
                 dprintf(s, "\033[H");
-                render_fdset(s, sess);
+                render_fdsets_cells(&magi_ui, sess);
+                render_surface(s, &magi_ui);
                 dprintf(s, "Monitoring, press enter to return to the main menu...\n");
             } while (read_block(s, buffer, BUFFER_SIZE, 100) == 0);
             dprintf(s, "\033[?25h");     // show cursor
             break;
+        }
         case 6:
             dprintf(s, "Goodbye!\n");
             return 0;

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.20)
 
 # Default compiler
 if(NOT CMAKE_C_COMPILER)
@@ -68,9 +68,12 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set(IMGRESOURCE_C ${GENERATED_DIR}/imgresource.c)
 set(IMGRESOURCE_H ${GENERATED_DIR}/imgresource.h)
+set(MAGI_UI_C ${GENERATED_DIR}/magi_ui.c)
+set(MAGI_UI_H ${GENERATED_DIR}/magi_ui.h)
+set(XTERM_COLORS_H ${GENERATED_DIR}/xterm_colors.h)
 
 # nervcenter executable
-add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c image.c ui.c ${IMGRESOURCE_C})
+add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c image.c ui.c ${MAGI_UI_C} ${IMGRESOURCE_C})
 target_include_directories(nervcenter PRIVATE ${ZLIB_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${GENERATED_DIR})
 target_link_libraries(nervcenter PRIVATE OpenSSL::Crypto pthread gcc_s ${ZLIB_LIBRARIES})
 
@@ -123,12 +126,6 @@ set_target_properties(decryptmessage PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/solver"
 )
 
-# Enable testing
-enable_testing()
-
-# Add the tests subdirectory
-add_subdirectory(tests)
-
 # Add the util subdirectory
 add_subdirectory(util)
 
@@ -146,5 +143,23 @@ add_custom_command(
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/util/pack_images ${CMAKE_CURRENT_SOURCE_DIR}/img/credits/frame_00000001.txt
 )
 
+add_custom_command(
+    OUTPUT ${MAGI_UI_C} ${MAGI_UI_H} ${XTERM_COLORS_H}
+    COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/util/add_ansi_colors.py --mode=markup2structs ${CMAKE_CURRENT_SOURCE_DIR}/ui_template/magi_ui.txt ${CMAKE_CURRENT_SOURCE_DIR}/ui_template/magi_ui_redbox.txt ${CMAKE_CURRENT_SOURCE_DIR}/ui_template/magi_ui_yellowbox.txt -n magi_ui -n magi_ui_red_box -n magi_ui_yellow_box -o ${GENERATED_DIR}/magi_ui
+    COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/util/add_ansi_colors.py --mode=dumpcolors -o ${XTERM_COLORS_H}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui_template/magi_ui_redbox.txt ${CMAKE_CURRENT_SOURCE_DIR}/ui_template/magi_ui.txt  ${CMAKE_CURRENT_SOURCE_DIR}/ui_template/magi_ui_yellowbox.txt ${CMAKE_CURRENT_SOURCE_DIR}/util/add_ansi_colors.py
+)
+
+# This ensures the files are always generated
+add_custom_target(generate_files ALL
+    DEPENDS ${MAGI_UI_C} ${MAGI_UI_H} ${XTERM_COLORS_H}
+)
+
 # Make sure the directory exists before generating files into it.
 file(MAKE_DIRECTORY ${GENERATED_DIR})
+
+# Enable testing
+enable_testing()
+
+# Add the tests subdirectory
+add_subdirectory(tests)
