@@ -392,12 +392,14 @@ def display_size_chars(chars):
     maxcols = 0
     current_col = 0
     for c in chars:
+        # If it ends with a newline, we *do* want to count that newline
+        # toward the number of columns, but if it ends with NO_NL, we don't.
+        # This happens automatically because for NO_NL, c.display_len is 0.
+        current_col += c.display_len
         if c.c == '\n' or c.c == Character.NO_NL:
             lines += 1
             maxcols = max(maxcols, current_col)
             current_col = 0
-        else:
-            current_col += c.display_len
     if current_col > 0:
         lines += 1
         maxcols = max(maxcols, current_col)

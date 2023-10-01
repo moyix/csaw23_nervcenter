@@ -5,12 +5,10 @@
 
 #include "nervcenter.h"
 
-void render_fdset(int fd, session_t *s);
-
 #define CELL_MAXBYTES 4
 
-#define ANSI_FGCOLOR(x) ("\033[38;5;" #x "m")
-#define ANSI_BGCOLOR(x) ("\033[48;5;" #x "m")
+#define ANSI_FGCOLOR_FMT ("\033[38;5;%dm")
+#define ANSI_BGCOLOR_FMT ("\033[48;5;%dm")
 #define ANSI_RESET "\033[0m"
 #define ANSI_BOLD "\033[01m"
 #define ANSI_DIM "\033[02m"

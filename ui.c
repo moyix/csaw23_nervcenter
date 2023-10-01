@@ -4,126 +4,127 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <sys/random.h>
 
 #include "ui.h"
 #include "magi_ui.h"
 #include "xterm_colors.h"
 
-void render_fdline(int fd, int i, fd_set *s, int maxfds) {
-    // unicode block elements to represent 0..15:
-    // ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█'
-    const unsigned char blocks[16][3] = {
-        { 0x00, 0x00, 0x00 },
-        { 0xe2, 0x96, 0x98 },
-        { 0xe2, 0x96, 0x9d },
-        { 0xe2, 0x96, 0x80 },
-        { 0xe2, 0x96, 0x96 },
-        { 0xe2, 0x96, 0x8c },
-        { 0xe2, 0x96, 0x9e },
-        { 0xe2, 0x96, 0x9b },
-        { 0xe2, 0x96, 0x97 },
-        { 0xe2, 0x96, 0x9a },
-        { 0xe2, 0x96, 0x90 },
-        { 0xe2, 0x96, 0x9c },
-        { 0xe2, 0x96, 0x84 },
-        { 0xe2, 0x96, 0x99 },
-        { 0xe2, 0x96, 0x9f },
-        { 0xe2, 0x96, 0x88 },
-    };
+// void render_fdline(int fd, int i, fd_set *s, int maxfds) {
+//     // unicode block elements to represent 0..15:
+//     // ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█'
+//     const unsigned char blocks[16][3] = {
+//         { 0x00, 0x00, 0x00 },
+//         { 0xe2, 0x96, 0x98 },
+//         { 0xe2, 0x96, 0x9d },
+//         { 0xe2, 0x96, 0x80 },
+//         { 0xe2, 0x96, 0x96 },
+//         { 0xe2, 0x96, 0x8c },
+//         { 0xe2, 0x96, 0x9e },
+//         { 0xe2, 0x96, 0x9b },
+//         { 0xe2, 0x96, 0x97 },
+//         { 0xe2, 0x96, 0x9a },
+//         { 0xe2, 0x96, 0x90 },
+//         { 0xe2, 0x96, 0x9c },
+//         { 0xe2, 0x96, 0x84 },
+//         { 0xe2, 0x96, 0x99 },
+//         { 0xe2, 0x96, 0x9f },
+//         { 0xe2, 0x96, 0x88 },
+//     };
 
-    // set color to red
-    dprintf(fd, "\033[31m");
-    for (int j = 0; j < 128; j += 4) {
-        int box_idx = 0;
-        for (int k = 0; k < 4; k++) {
-            if (i + j + k >= maxfds) break;
-            if (FD_ISSET(i + j + k, s)) {
-                box_idx |= 1 << k;
-            }
-        }
-        if (box_idx == 0) {
-            dprintf(fd, " ");
-        }
-        else {
-            write(fd, blocks[box_idx], 3);
-        }
-    }
-    // reset color
-    dprintf(fd, "\033[0m");
-}
+//     // set color to red
+//     dprintf(fd, "\033[31m");
+//     for (int j = 0; j < 128; j += 4) {
+//         int box_idx = 0;
+//         for (int k = 0; k < 4; k++) {
+//             if (i + j + k >= maxfds) break;
+//             if (FD_ISSET(i + j + k, s)) {
+//                 box_idx |= 1 << k;
+//             }
+//         }
+//         if (box_idx == 0) {
+//             dprintf(fd, " ");
+//         }
+//         else {
+//             write(fd, blocks[box_idx], 3);
+//         }
+//     }
+//     // reset color
+//     dprintf(fd, "\033[0m");
+// }
 
-// Draw the three fd_sets using the unicode block elements
-void render_fdset(int fd, session_t *s) {
-    const unsigned char spacer[32];
-    const unsigned char vertical_line[] = { 0xe2, 0x95, 0x91 };
-    const unsigned char left_diag[] = { 0xe2, 0x95, 0xb1 };
-    const unsigned char right_diag[] = { 0xe2, 0x95, 0xb2 };
-    const unsigned char casper[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x43, 0x41, 0x53, 0x50, 0x45, 0x52, 0x2d, 0x33, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
-    const unsigned char balthasar[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x42, 0x41, 0x4c, 0x54, 0x48, 0x41, 0x53, 0x41, 0x52, 0x2d, 0x32, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
-    const unsigned char melchior[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x4d, 0x45, 0x4c, 0x43, 0x48, 0x49, 0x4f, 0x52, 0x2d, 0x31, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
-    const unsigned char bottom[] = { 0xe2, 0x95, 0x9a, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x9d };
-    const unsigned char bar[] = { 0xe2, 0x95, 0xa0, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0xa3 };
-    memset((void *)spacer, ' ', sizeof(spacer));
+// // Draw the three fd_sets using the unicode block elements
+// void render_fdset(int fd, session_t *s) {
+//     const unsigned char spacer[32];
+//     const unsigned char vertical_line[] = { 0xe2, 0x95, 0x91 };
+//     const unsigned char left_diag[] = { 0xe2, 0x95, 0xb1 };
+//     const unsigned char right_diag[] = { 0xe2, 0x95, 0xb2 };
+//     const unsigned char casper[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x43, 0x41, 0x53, 0x50, 0x45, 0x52, 0x2d, 0x33, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
+//     const unsigned char balthasar[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x42, 0x41, 0x4c, 0x54, 0x48, 0x41, 0x53, 0x41, 0x52, 0x2d, 0x32, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
+//     const unsigned char melchior[] = { 0xe2, 0x95, 0x94, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0x20, 0x4d, 0x45, 0x4c, 0x43, 0x48, 0x49, 0x4f, 0x52, 0x2d, 0x31, 0x20, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x97 };
+//     const unsigned char bottom[] = { 0xe2, 0x95, 0x9a, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x9d };
+//     const unsigned char bar[] = { 0xe2, 0x95, 0xa0, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0x90, 0xe2, 0x95, 0xa3 };
+//     memset((void *)spacer, ' ', sizeof(spacer));
 
-    pthread_mutex_lock(&s->sensor_lock);
+//     pthread_mutex_lock(&s->sensor_lock);
 
-    // Balthasar
-    write(fd, spacer, 24);
-    write(fd, balthasar, sizeof(balthasar));
-    dprintf(fd, "\n");
-    for (int i = 0; i < s->maxfds; i += 128) {
-        write(fd, spacer, 24);
-        write(fd, vertical_line, sizeof(vertical_line));
-        render_fdline(fd, i, &s->readfds, s->maxfds);
-        write(fd, vertical_line, sizeof(vertical_line));
-        dprintf(fd, "\n");
-    }
-    write(fd, spacer, 24);
-    write(fd, bottom, sizeof(bottom));
-    dprintf(fd, "\n");
-    // Diagonal connectors
-    write(fd, spacer, 31);
-    write(fd, left_diag, sizeof(left_diag));
-    write(fd, spacer, 18);
-    write(fd, right_diag, sizeof(right_diag));
-    dprintf(fd, "\n");
-    write(fd, spacer, 30);
-    write(fd, left_diag, sizeof(left_diag));
-    write(fd, spacer, 20);
-    write(fd, right_diag, sizeof(right_diag));
-    dprintf(fd, "\n");
+//     // Balthasar
+//     write(fd, spacer, 24);
+//     write(fd, balthasar, sizeof(balthasar));
+//     dprintf(fd, "\n");
+//     for (int i = 0; i < s->maxfds; i += 128) {
+//         write(fd, spacer, 24);
+//         write(fd, vertical_line, sizeof(vertical_line));
+//         render_fdline(fd, i, &s->readfds, s->maxfds);
+//         write(fd, vertical_line, sizeof(vertical_line));
+//         dprintf(fd, "\n");
+//     }
+//     write(fd, spacer, 24);
+//     write(fd, bottom, sizeof(bottom));
+//     dprintf(fd, "\n");
+//     // Diagonal connectors
+//     write(fd, spacer, 31);
+//     write(fd, left_diag, sizeof(left_diag));
+//     write(fd, spacer, 18);
+//     write(fd, right_diag, sizeof(right_diag));
+//     dprintf(fd, "\n");
+//     write(fd, spacer, 30);
+//     write(fd, left_diag, sizeof(left_diag));
+//     write(fd, spacer, 20);
+//     write(fd, right_diag, sizeof(right_diag));
+//     dprintf(fd, "\n");
 
-    // Casper and Melchior
-    write(fd, spacer, 2);
-    write(fd, casper, sizeof(casper));
-    write(fd, spacer, 10);
-    write(fd, melchior, sizeof(melchior));
-    dprintf(fd, "\n");
-    for (int i = 0; i < s->maxfds; i += 128) {
-        write(fd, spacer, 2);
-        write(fd, vertical_line, sizeof(vertical_line));
-        render_fdline(fd, i, &s->writefds, s->maxfds);
-        if (i == 512) {
-            write(fd, bar, sizeof(bar));
-        }
-        else {
-            write(fd, vertical_line, sizeof(vertical_line));
-            write(fd, spacer, 10);
-            write(fd, vertical_line, sizeof(vertical_line));
-        }
-        render_fdline(fd, i, &s->exceptfds, s->maxfds);
-        write(fd, vertical_line, sizeof(vertical_line));
-        dprintf(fd, "\n");
-    }
-    write(fd, spacer, 2);
-    write(fd, bottom, sizeof(bottom));
-    write(fd, spacer, 10);
-    write(fd, bottom, sizeof(bottom));
-    dprintf(fd, "\n");
-    pthread_mutex_unlock(&s->sensor_lock);
-}
+//     // Casper and Melchior
+//     write(fd, spacer, 2);
+//     write(fd, casper, sizeof(casper));
+//     write(fd, spacer, 10);
+//     write(fd, melchior, sizeof(melchior));
+//     dprintf(fd, "\n");
+//     for (int i = 0; i < s->maxfds; i += 128) {
+//         write(fd, spacer, 2);
+//         write(fd, vertical_line, sizeof(vertical_line));
+//         render_fdline(fd, i, &s->writefds, s->maxfds);
+//         if (i == 512) {
+//             write(fd, bar, sizeof(bar));
+//         }
+//         else {
+//             write(fd, vertical_line, sizeof(vertical_line));
+//             write(fd, spacer, 10);
+//             write(fd, vertical_line, sizeof(vertical_line));
+//         }
+//         render_fdline(fd, i, &s->exceptfds, s->maxfds);
+//         write(fd, vertical_line, sizeof(vertical_line));
+//         dprintf(fd, "\n");
+//     }
+//     write(fd, spacer, 2);
+//     write(fd, bottom, sizeof(bottom));
+//     write(fd, spacer, 10);
+//     write(fd, bottom, sizeof(bottom));
+//     dprintf(fd, "\n");
+//     pthread_mutex_unlock(&s->sensor_lock);
+// }
 
-void render_cell(int fd, ui_cell_t *cell) {
+void render_cell_style(int fd, ui_cell_t *cell) {
     if (cell->flags & UI_SKIP) return;
     if (cell->flags & UI_STYLE_RESET) {
         dprintf(fd, ANSI_RESET);
@@ -156,11 +157,16 @@ void render_cell(int fd, ui_cell_t *cell) {
         dprintf(fd, ANSI_RESET);
     }
     if (cell->fg >= 0) {
-        dprintf(fd, ANSI_FGCOLOR(%d), cell->fg);
+        dprintf(fd, ANSI_FGCOLOR_FMT, cell->fg);
     }
     if (cell->bg >= 0) {
-        dprintf(fd, ANSI_BGCOLOR(%d), cell->bg);
+        dprintf(fd, ANSI_BGCOLOR_FMT, cell->bg);
     }
+}
+
+void render_cell(int fd, ui_cell_t *cell) {
+    if (cell->flags & UI_SKIP) return;
+    render_cell_style(fd, cell);
     write(fd, cell->bytes, cell->len);
     dprintf(fd, ANSI_RESET);
 }
@@ -182,7 +188,7 @@ void update_cell(ui_cell_t *cell, ui_cell_t *other) {
         cell->flags = other->flags;
 }
 
-void render_fdline_cells(ui_surface_t *surface, int row, int col, int i, fd_set *s, int maxfds) {
+void render_fdline_cells(ui_surface_t *surface, int row, int col, int i, fd_set *s, int nfds) {
     // unicode block elements to represent 0..15:
     // ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█'
     ui_cell_t blocks[16] = {
@@ -208,7 +214,7 @@ void render_fdline_cells(ui_surface_t *surface, int row, int col, int i, fd_set 
     for (int j = 0; j < 128; j += 4) {
         int box_idx = 0;
         for (int k = 0; k < 4; k++) {
-            if (i + j + k >= maxfds) break;
+            if (i + j + k >= nfds) break;
             if (FD_ISSET(i + j + k, s)) {
                 box_idx |= 1 << k;
             }
@@ -247,10 +253,10 @@ int printf_cells(ui_surface_t *surface, int row, int col,
     return n;
 }
 
-void render_fdset_cells(ui_surface_t *surface, int row, int col, fd_set *s, int maxfds) {
+void render_fdset_cells(ui_surface_t *surface, int row, int col, fd_set *s, int nfds) {
     int row_offset = 0;
-    for (int i = 0; i < maxfds; i += 128) {
-        render_fdline_cells(surface, row + row_offset, col, i, s, maxfds);
+    for (int i = 0; i < nfds; i += 128) {
+        render_fdline_cells(surface, row + row_offset, col, i, s, nfds);
         row_offset++;
     }
 }
@@ -263,8 +269,30 @@ void blit_surface(ui_surface_t *dst, ui_surface_t *src, int dst_row, int dst_col
     }
 }
 
+ui_surface_t *create_surface(int width, int height) {
+    ui_surface_t *surface = malloc(sizeof(ui_surface_t));
+    surface->cells = malloc(sizeof(ui_cell_t) * width * height);
+    surface->width = width;
+    surface->height = height;
+    return surface;
+}
+
+ui_surface_t *create_surface_from_cell(int width, int height, ui_cell_t *cell) {
+    ui_surface_t *surface = create_surface(width, height);
+    // use memcpy to copy the cell to every cell in the surface
+    for (int i = 0; i < width * height; i++) {
+        memcpy(&surface->cells[i], cell, sizeof(ui_cell_t));
+    }
+    return surface;
+}
+
+void free_surface(ui_surface_t *surface) {
+    free(surface->cells);
+    free(surface);
+}
+
 void debug_dumpflags(uint32_t flags) {
-    if (flags & UI_SKIP) printf("UI_SKIP ");
+    if (flags == UI_SKIP) { printf("UI_SKIP\n"); return; }
     if (flags & UI_STYLE_RESET) printf("UI_STYLE_RESET ");
     if (flags & UI_STYLE_BOLD) printf("UI_STYLE_BOLD ");
     if (flags & UI_STYLE_DIM) printf("UI_STYLE_DIM ");
@@ -295,29 +323,58 @@ void debug_dumpcell(ui_surface_t *surface, int row, int col) {
     printf("  bytes(str) = '%.*s'\n", cell->len, cell->bytes);
     int16_t fg = cell->fg;
     int16_t bg = cell->bg;
-    printf("  fg = %s\n", fg == -1 ? "default" : xterm_color_names[fg]);
-    printf("  bg = %s\n", bg == -1 ? "default" : xterm_color_names[bg]);
+    render_cell_style(1, cell);
+    printf("  fg = %s, bg = %s\n",
+        fg == -1 ? "default" : xterm_color_names[fg],
+        bg == -1 ? "default" : xterm_color_names[bg]);
+    dprintf(1, ANSI_RESET);
     printf("  flags = ");
     debug_dumpflags(cell->flags);
 }
 
 void render_fdsets_cells(ui_surface_t *surface, session_t *s) {
     pthread_mutex_lock(&s->sensor_lock);
+
+    // Blank the three display surfaces
+    ui_surface_t *blank = create_surface_from_cell(32, 8, CELL_AT(surface, 3, 25));
+    blit_surface(surface, blank, 3, 25);
+    blit_surface(surface, blank, 14, 3);
+    blit_surface(surface, blank, 14, 47);
+    free_surface(blank);
+
     // Balthasar is at (3, 25)
-    render_fdset_cells(surface, 3, 25, &s->readfds, s->maxfds);
+    render_fdset_cells(surface, 3, 25, &s->readfds, s->nfds+1);
     // Casper is at (14, 3)
-    render_fdset_cells(surface, 14, 3, &s->writefds, s->maxfds);
+    render_fdset_cells(surface, 14, 3, &s->writefds, s->nfds+1);
     // Melchior is at (14, 47)
-    render_fdset_cells(surface, 14, 47, &s->exceptfds, s->maxfds);
+    render_fdset_cells(surface, 14, 47, &s->exceptfds, s->nfds+1);
     // Number of fds is at (5, 14)
     printf_cells(surface, 5, 14, UI_STYLE_BOLD, XTERM_COLOR_DARKORANGE3_1, -1, "%-4d", s->nfds+1);
-    // Add the infobox at (10, 70)
-    printf("Before blit:\n");
-    for (int c = 0; c < magi_ui_red_box.width; c++)
-        debug_dumpcell(surface, 11, 70+c);
-    blit_surface(surface, &magi_ui_red_box, 10, 70);
-    printf("After blit:\n");
-    for (int c = 0; c < magi_ui_red_box.width; c++)
-        debug_dumpcell(surface, 11, 70+c);
+    // Max fds is at (7, 19)
+    printf_cells(surface, 7, 19, UI_STYLE_NONE, XTERM_COLOR_DARKORANGE3_1, -1, "%-4d", s->maxfds);
+
+    // Add the infobox at (10, 70). Two special effects:
+    // 1. If the number of fds is > 1024, use the red box instead of the yellow box
+    // 2. With some probability, don't render the box at all to give a flickering effect
+    ui_surface_t *box;
+    if (s->nfds+1 > 1024) {
+        box = &magi_ui_red_box;
+    }
+    else {
+         box = &magi_ui_yellow_box;
+    }
+    // 1 in 8 chance of not rendering the box
+    unsigned char r = 0;
+    getrandom(&r, 1, 0);
+    if (r > 0x10) {
+        blit_surface(surface, box, 10, 70);
+    }
+    else {
+        ui_cell_t black_cell = { .bytes = { 0x20, 0x00, 0x00 }, .len = 1, .fg = -1, .bg = -1, .flags = UI_STYLE_NONE };
+        ui_surface_t *black_box = create_surface_from_cell(box->width, box->height, &black_cell);
+        blit_surface(surface, black_box, 10, 70);
+        free_surface(black_box);
+    }
+
     pthread_mutex_unlock(&s->sensor_lock);
 }
