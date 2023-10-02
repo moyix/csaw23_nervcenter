@@ -126,9 +126,6 @@ set_target_properties(decryptmessage PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/solver"
 )
 
-# Add the util subdirectory
-add_subdirectory(util)
-
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/img/credits/frame_00000001.txt
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -155,11 +152,50 @@ add_custom_target(generate_files ALL
     DEPENDS ${MAGI_UI_C} ${MAGI_UI_H} ${XTERM_COLORS_H}
 )
 
-# Make sure the directory exists before generating files into it.
-file(MAKE_DIRECTORY ${GENERATED_DIR})
-
 # Enable testing
 enable_testing()
 
 # Add the tests subdirectory
 add_subdirectory(tests)
+
+foreach(testprog ${TEST_PROGRAMS})
+    message (STATUS "Adding generate_files as dependency for test program ${testprog}")
+    add_dependencies(${testprog} generate_files)
+endforeach(testprog ${TEST_PROGRAMS})
+
+# Make sure the directory exists before generating files into it.
+file(MAKE_DIRECTORY ${GENERATED_DIR})
+
+# Add the util subdirectory
+add_subdirectory(util)
+
+if (CMAKE_BUILD_TYPE MATCHES "Coverage")
+
+add_custom_target(run_tests_coverage
+    COMMAND ${CMAKE_COMMAND} -E env LLVM_PROFILE_FILE="${CMAKE_BINARY_DIR}/testsuite.%p.profraw" ctest
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Running tests with coverage..."
+)
+
+foreach(testprog ${TEST_PROGRAMS})
+    message(STATUS "Adding run_tests_coverage as dependency for test program ${testprog}")
+    add_dependencies(run_tests_coverage ${testprog})
+endforeach(testprog ${TEST_PROGRAMS})
+
+# Merge .profraw files
+add_custom_target(merge_coverage_data
+    COMMAND llvm-profdata merge -sparse *.profraw -o merged.profdata
+    DEPENDS run_tests_coverage
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Merging coverage data..."
+)
+
+# Generate the HTML report
+add_custom_target(coverage_report
+    COMMAND llvm-cov show $<TARGET_FILE:nervcenter> -instr-profile=merged.profdata --format=html -output-dir=coverage_report
+    DEPENDS merge_coverage_data
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Generating coverage report..."
+)
+
+endif()

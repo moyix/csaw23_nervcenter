@@ -30,6 +30,7 @@ int encrypt_message(session_t *sess,
 int decrypt_message(RSA *rsa,
     unsigned char *ciphertext, size_t ciphertext_len,
     unsigned char **message, size_t *message_len);
+rsa_error_t validate_key(unsigned char *pubkey, unsigned int pubkey_len);
 
 #ifdef __cplusplus
 }
