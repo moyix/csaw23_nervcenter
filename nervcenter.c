@@ -45,8 +45,10 @@ const char *angel_list[] = {
 };
 int angel_list_len = 17;
 
-// Signal handler for SIGUSR1, which just calls exit() so we can get leak info
-void sigusr1_handler(int signum) {
+// Signal handler for several signals, which just calls exit() so we can get leak info
+void sig_handler(int signum) {
+    write(1, "Exiting due to signal\n", 22);
+    write(1, "Signal: ", 8);
     exit(0);
 }
 
@@ -93,8 +95,8 @@ int sendimg(int fd, const char *path, int delay) {
     while (ptr < end) {
         size_t len = 0;
         // get the length of the line
-        while (ptr < end && ptr[len] != '\n') len++;
-        if (ptr < end) len++; // include the newline
+        while (ptr+len < end && ptr[len] != '\n') len++;
+        if (ptr+len < end) len++; // include the newline
         write(fd, ptr, len);
         // advance the pointer past the line
         ptr += len;
@@ -767,7 +769,8 @@ control_cleanup:
 int main() {
     // Ignore SIGPIPE so we don't crash when a sensor disconnects
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGUSR1, sigusr1_handler);
+    signal(SIGUSR1, sig_handler);
+    signal(SIGINT, sig_handler);
 
     // Set max files
     unsigned long maxfiles = increase_fd_limit(PREFERRED_MAXFILES);

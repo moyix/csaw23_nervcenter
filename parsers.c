@@ -25,7 +25,7 @@ sensor_command_t parse_sensor_input(char *buffer, size_t buflen, char **arg) {
         *arg = ptr;
         return SENSOR_CMD_EXAMINE;
     }
-    else if (buflen >= 9 && strncmp(buffer, "REPORT", 6) == 0) {
+    else if (buflen >= 6 && strncmp(buffer, "REPORT", 6) == 0) {
         return SENSOR_CMD_REPORT;
     }
     else if (buflen >= 4 && strncmp(buffer, "QUIT", 4) == 0) {
