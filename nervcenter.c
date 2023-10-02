@@ -803,7 +803,7 @@ int main() {
         args->maxfiles = maxfiles;
         pthread_create(&thread, NULL, control_thread, (void *)args);
         char threadname[16] = {0};
-        sprintf(threadname, "control-%d", new_socket);
+        sprintf(threadname, "control-%d", (short)new_socket);
         pthread_setname_np(thread, threadname);
     }
 

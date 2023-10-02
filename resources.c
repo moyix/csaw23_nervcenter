@@ -69,7 +69,8 @@ static int pack_dir_rec(const char *path, unsigned char **blob, size_t *blob_siz
             }
 
             resource_header header;
-            snprintf(header.name, sizeof(header.name), "%s", fullpath);
+            // This might truncate in theory but not with any of the paths we have
+            snprintf(header.name, sizeof(header.name), "%.*s", (int)sizeof(header.name), fullpath);
             header.size = compressed_size;
 
             if (cb) cb(fullpath, st.st_size, compressed_size, RESOURCE_CB_AFTER);

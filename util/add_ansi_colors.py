@@ -455,7 +455,7 @@ def main():
         colorname_def = 'XTERM_COLOR_COUNT'
         out_text += f'#define {colorname_def:<30s} {len(colors)}\n\n'
         # Color names
-        out_text += 'static const char *xterm_color_names[] = {\n'
+        out_text += 'static const char *xterm_color_names[] __attribute__((unused)) = {\n'
         for name, color in sorted(colors, key=lambda x: x[1].code):
             out_text += f'    "{color.name}",\n'
         out_text += '};\n'

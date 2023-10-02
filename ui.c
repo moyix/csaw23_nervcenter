@@ -7,6 +7,7 @@
 #include <sys/random.h>
 #include <sys/time.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 #include "ui.h"
 #include "magi_ui.h"
@@ -440,7 +441,8 @@ void debug_dumpcell(ui_surface_t *surface, int row, int col) {
 void render_fdsets_cells(ui_surface_t *surface, session_t *s) {
     pthread_mutex_lock(&s->sensor_lock);
 
-    // Blank the three display surfaces
+    // Blank the three display surfaces; grab first cell of Balthasar's surface
+    // to create it.
     ui_surface_t *blank = create_surface_from_cell(32, 8, CELL_AT(surface, 3, 25));
     blit_surface(surface, blank, 3, 25);
     blit_surface(surface, blank, 14, 3);
