@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "../parsers.h"
+#include "parsers.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     char *arg;

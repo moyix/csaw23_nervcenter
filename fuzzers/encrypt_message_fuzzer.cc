@@ -6,8 +6,8 @@
 
 // guard C headers
 extern "C" {
-#include "../rsautil.h"
-#include "../nervcenter.h"
+#include "rsautil.h"
+#include "nervcenter.h"
 }
 
 // int encrypt_message(session_t *sess,

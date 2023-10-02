@@ -6,8 +6,8 @@
 
 // guard C headers
 extern "C" {
-#include "../rsautil.h"
-#include "../nervcenter.h"
+#include "rsautil.h"
+#include "nervcenter.h"
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {

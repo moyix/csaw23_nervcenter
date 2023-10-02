@@ -62,7 +62,7 @@ find_package(ZLIB REQUIRED)
 # libgmp for brent
 find_package(GMP REQUIRED)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Generate the paths for the generated files in the build directory
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -73,7 +73,7 @@ set(MAGI_UI_H ${GENERATED_DIR}/magi_ui.h)
 set(XTERM_COLORS_H ${GENERATED_DIR}/xterm_colors.h)
 
 # nervcenter executable
-add_executable(nervcenter nervcenter.c rsautil.c base64.c parsers.c resources.c image.c ui.c utils.c ${MAGI_UI_C} ${IMGRESOURCE_C})
+add_executable(nervcenter src/nervcenter.c src/rsautil.c src/base64.c src/parsers.c src/resources.c src/image.c src/ui.c src/utils.c ${MAGI_UI_C} ${IMGRESOURCE_C})
 target_include_directories(nervcenter PRIVATE ${ZLIB_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${GENERATED_DIR})
 target_link_libraries(nervcenter PRIVATE OpenSSL::Crypto pthread gcc_s ${ZLIB_LIBRARIES})
 
@@ -94,14 +94,14 @@ function(add_fuzzer_target target_name)
 endfunction()
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-    add_fuzzer_target(sensor_fuzzer fuzzers/sensor_fuzzer.c parsers.c)
-    add_fuzzer_target(validate_challenge_fuzzer fuzzers/validate_challenge_fuzzer.cc rsautil.c base64.c)
+    add_fuzzer_target(sensor_fuzzer fuzzers/sensor_fuzzer.c src/parsers.c)
+    add_fuzzer_target(validate_challenge_fuzzer fuzzers/validate_challenge_fuzzer.cc src/rsautil.c src/base64.c)
     target_link_libraries(validate_challenge_fuzzer PRIVATE OpenSSL::Crypto)
-    add_fuzzer_target(dump_pubkey_ssh_fuzzer fuzzers/dump_pubkey_ssh_fuzzer.cc rsautil.c base64.c)
+    add_fuzzer_target(dump_pubkey_ssh_fuzzer fuzzers/dump_pubkey_ssh_fuzzer.cc src/rsautil.c src/base64.c)
     target_link_libraries(dump_pubkey_ssh_fuzzer PRIVATE OpenSSL::Crypto)
-    add_fuzzer_target(encrypt_message_fuzzer fuzzers/encrypt_message_fuzzer.cc rsautil.c base64.c)
+    add_fuzzer_target(encrypt_message_fuzzer fuzzers/encrypt_message_fuzzer.cc src/rsautil.c src/base64.c)
     target_link_libraries(encrypt_message_fuzzer PRIVATE OpenSSL::Crypto)
-    add_fuzzer_target(decrypt_message_fuzzer fuzzers/encrypt_message_fuzzer.cc rsautil.c base64.c)
+    add_fuzzer_target(decrypt_message_fuzzer fuzzers/encrypt_message_fuzzer.cc src/rsautil.c src/base64.c)
     target_link_libraries(decrypt_message_fuzzer PRIVATE OpenSSL::Crypto)
 endif()
 

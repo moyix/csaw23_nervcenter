@@ -7,8 +7,8 @@
 
 // guard C headers
 extern "C" {
-#include "../rsautil.h"
-#include "../nervcenter.h"
+#include "rsautil.h"
+#include "nervcenter.h"
 }
 
 // char * dump_pubkey_ssh(int e, unsigned char *pubkey, unsigned int pubkey_len, char *comment);
