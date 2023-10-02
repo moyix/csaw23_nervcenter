@@ -13,3 +13,5 @@ add_test_program(test_pack "../resources.c;${IMGRESOURCE_C}" "${ZLIB_INCLUDE_DIR
 add_test_program(test_rsa_sig "../rsautil.c;../base64.c" "${OPENSSL_INCLUDE_DIR}" OpenSSL::Crypto)
 add_test_program(test_rsa_enc "../rsautil.c;../base64.c" "${OPENSSL_INCLUDE_DIR}" OpenSSL::Crypto)
 add_test_program(test_ui "../ui.c;${MAGI_UI_C}" "${GENERATED_DIR}" "")
+add_test_program(test_base64 "../base64.c" "" "")
+add_test_program(test_sendimgvid "../utils.c;../image.c;../resources.c;${IMGRESOURCE_C}" "${GENERATED_DIR};${ZLIB_INCLUDE_DIRS}" "${ZLIB_LIBRARIES}")
