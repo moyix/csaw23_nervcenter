@@ -78,7 +78,7 @@ target_include_directories(nervcenter PRIVATE ${ZLIB_INCLUDE_DIRS} ${OPENSSL_INC
 target_link_libraries(nervcenter PRIVATE OpenSSL::Crypto pthread gcc_s ${ZLIB_LIBRARIES})
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
-    target_compile_definitions(nervcenter PRIVATE CHALDEBUG)
+    add_definitions(-DCHALDEBUG)
 endif()
 
 # helper function for fuzzer executables

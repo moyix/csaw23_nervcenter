@@ -20,7 +20,51 @@ int random_fdset(fd_set *s, int maxfds) {
 
 #define ROUNDS 100
 
+void runtest(session_t *s,
+             int fd, ui_surface_t *surface, int use_opt_render,
+             size_t *total_bytes, suseconds_t *total_time) {
+    dprintf(1, "\033[H\033[2J\033[3J");
+    dprintf(1, "\033[?25l");            // hide cursor
+    for (int i = 0; i < ROUNDS; i++) {
+    // Make up three fd_sets by setting random bits
+        int n = random_fdset(&s->readfds, s->maxfds);
+        if (n > s->nfds) s->nfds = n;
+        n = random_fdset(&s->writefds, s->maxfds);
+        if (n > s->nfds) s->nfds = n;
+        n = random_fdset(&s->exceptfds, s->maxfds);
+        if (n > s->nfds) s->nfds = n;
+        dprintf(1, "\033[H");
+        render_fdsets_cells(&magi_ui, s);
+        if (use_opt_render) {
+            render_surface_opt(1, &magi_ui);
+        }
+        else {
+            render_surface_naive(1, &magi_ui);
+        }
+        s->maxfds++;
+        if (s->maxfds > 1024+64) s->maxfds = 1024+64;
+#ifdef CHALDEBUG
+        printf("Rendering statistics (%s):\n", use_opt_render ? "opt" : "naive");
+        printf("  bytes written: %zu\n", magi_ui.bytes_written);
+        printf("  last render: %ld us\n", magi_ui.last_render);
+        *total_bytes += magi_ui.bytes_written;
+        *total_time += magi_ui.last_render;
+#endif
+        usleep(10000);
+    };
+    dprintf(1, "\033[?25h");            // show cursor
+    dprintf(1, "\033[0m");              // reset attributes
+    // clear scrollback buffer
+    dprintf(1, "\033[3J");
+}
+
 int main(int argc, char **argv) {
+#ifdef CHALDEBUG
+    size_t total_bytes_naive = 0;
+    suseconds_t total_time_naive = 0;
+    size_t total_bytes_opt = 0;
+    suseconds_t total_time_opt = 0;
+#endif
     session_t s;
     if (argc < 2) {
         s.maxfds = 1024+64-ROUNDS;
@@ -30,25 +74,21 @@ int main(int argc, char **argv) {
     }
     s.nfds = 0;
     pthread_mutex_init(&s.sensor_lock, NULL);
-    dprintf(1, "\033[H\033[2J\033[3J");
-    dprintf(1, "\033[?25l");            // hide cursor
-    for (int i = 0; i < ROUNDS; i++) {
-    // Make up three fd_sets by setting random bits
-        int n = random_fdset(&s.readfds, s.maxfds);
-        if (n > s.nfds) s.nfds = n;
-        n = random_fdset(&s.writefds, s.maxfds);
-        if (n > s.nfds) s.nfds = n;
-        n = random_fdset(&s.exceptfds, s.maxfds);
-        if (n > s.nfds) s.nfds = n;
-        dprintf(1, "\033[H");
-        render_fdsets_cells(&magi_ui, &s);
-        render_surface(1, &magi_ui);
-        s.maxfds++;
-        if (s.maxfds > 1024+64) s.maxfds = 1024;
-        usleep(10000);
-    };
-    dprintf(1, "\033[?25h");            // show cursor
-    dprintf(1, "\033[0m");              // reset attributes
-
+    runtest(&s, 1, &magi_ui, 0, &total_bytes_naive, &total_time_naive);
+    runtest(&s, 1, &magi_ui, 1, &total_bytes_opt, &total_time_opt);
+#ifdef CHALDEBUG
+    printf("Naive renderer:\n");
+    printf("  Total bytes written: %zu\n", total_bytes_naive);
+    printf("  Total time: %ld us\n", total_time_naive);
+    printf("  Average bytes per render: %zu\n", total_bytes_naive / ROUNDS);
+    printf("  Average time: %ld us\n", total_time_naive / ROUNDS);
+    printf("Optimized renderer:\n");
+    printf("  Total bytes written: %zu\n", total_bytes_opt);
+    printf("  Total time: %ld us\n", total_time_opt);
+    printf("  Average bytes per render: %zu\n", total_bytes_opt / ROUNDS);
+    printf("  Average time: %ld us\n", total_time_opt / ROUNDS);
+    printf("Speedup: %.2fx\n", (float)total_time_naive / (float)total_time_opt);
+    printf("Bytes saved: %zu\n", total_bytes_naive - total_bytes_opt);
+#endif
     return 0;
 }

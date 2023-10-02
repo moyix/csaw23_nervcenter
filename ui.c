@@ -5,6 +5,8 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <sys/random.h>
+#include <sys/time.h>
+#include <stdbool.h>
 
 #include "ui.h"
 #include "magi_ui.h"
@@ -125,56 +127,151 @@
 // }
 
 void render_cell_style(int fd, ui_cell_t *cell) {
+    int n = 0;
     if (cell->flags & UI_SKIP) return;
     if (cell->flags & UI_STYLE_RESET) {
-        dprintf(fd, ANSI_RESET);
+        n = dprintf(fd, ANSI_RESET);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_BOLD) {
-        dprintf(fd, ANSI_BOLD);
+        n = dprintf(fd, ANSI_BOLD);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_DIM) {
-        dprintf(fd, ANSI_DIM);
+        n = dprintf(fd, ANSI_DIM);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_ITALIC) {
-        dprintf(fd, ANSI_ITALIC);
+        n = dprintf(fd, ANSI_ITALIC);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_UNDERLINE) {
-        dprintf(fd, ANSI_UNDERLINED);
+        n = dprintf(fd, ANSI_UNDERLINED);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_BLINK) {
-        dprintf(fd, ANSI_BLINK);
+        n = dprintf(fd, ANSI_BLINK);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_REVERSE) {
-        dprintf(fd, ANSI_REVERSE);
+        n = dprintf(fd, ANSI_REVERSE);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_HIDDEN) {
-        dprintf(fd, ANSI_HIDDEN);
+        n = dprintf(fd, ANSI_HIDDEN);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_STRIKETHROUGH) {
-        dprintf(fd, ANSI_STRIKETHROUGH);
+        n = dprintf(fd, ANSI_STRIKETHROUGH);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->flags & UI_STYLE_NONE) {
-        dprintf(fd, ANSI_RESET);
+        n = dprintf(fd, ANSI_RESET);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->fg >= 0) {
-        dprintf(fd, ANSI_FGCOLOR_FMT, cell->fg);
+        n = dprintf(fd, ANSI_FGCOLOR_FMT, cell->fg);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
     if (cell->bg >= 0) {
-        dprintf(fd, ANSI_BGCOLOR_FMT, cell->bg);
+        n = dprintf(fd, ANSI_BGCOLOR_FMT, cell->bg);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
 }
 
 void render_cell(int fd, ui_cell_t *cell) {
+    int n = 0;
     if (cell->flags & UI_SKIP) return;
     render_cell_style(fd, cell);
-    write(fd, cell->bytes, cell->len);
-    dprintf(fd, ANSI_RESET);
+    n = write(fd, cell->bytes, cell->len);
+#ifdef CHALDEBUG
+    if (n > 0) magi_ui.bytes_written += n;
+#endif
 }
 
-void render_surface(int fd, ui_surface_t *surface) {
+void render_surface_naive(int fd, ui_surface_t *surface) {
+#ifdef CHALDEBUG
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    surface->bytes_written = 0;
+#endif
     for (int i = 0; i < surface->width * surface->height; i++) {
         render_cell(fd, &surface->cells[i]);
+        int n = dprintf(fd, ANSI_RESET);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
     }
+#ifdef CHALDEBUG
+    gettimeofday(&end, NULL);
+    surface->last_render = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
+#endif
+}
+
+bool style_eq(ui_cell_t *a, ui_cell_t *b) {
+    // if both a and b are NULL return true
+    if (!a && !b) return true;
+    // if only one is NULL return false
+    if (!a || !b) return false;
+    return a->flags == b->flags && a->fg == b->fg && a->bg == b->bg;
+}
+
+// optimized version of render_surface that tracks whether the
+// previous cell's style is the same as the current cell's style
+// and only sends the ANSI escape codes when they change
+void render_surface_opt(int fd, ui_surface_t *surface) {
+#ifdef CHALDEBUG
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    surface->bytes_written = 0;
+#endif
+    int n = 0;
+    ui_cell_t *cell = NULL;
+    ui_cell_t *prev = NULL;
+    for (int i = 0; i < surface->width * surface->height; i++) {
+        cell = &surface->cells[i];
+        if (cell->flags & UI_SKIP) continue;
+        if (!style_eq(cell, prev)) {
+            render_cell_style(fd, cell);
+        }
+        n = write(fd, cell->bytes, cell->len);
+#ifdef CHALDEBUG
+        if (n > 0) magi_ui.bytes_written += n;
+#endif
+        prev = cell;
+    }
+    if (prev) {
+        n = dprintf(fd, ANSI_RESET);
+    }
+#ifdef CHALDEBUG
+    if (n > 0) magi_ui.bytes_written += n;
+    gettimeofday(&end, NULL);
+    surface->last_render = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
+#endif
 }
 
 void update_cell(ui_cell_t *cell, ui_cell_t *other) {

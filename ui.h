@@ -33,6 +33,11 @@ typedef struct {
     ui_cell_t *cells;
     int width;
     int height;
+#ifdef CHALDEBUG
+    // accounting fields
+    size_t bytes_written;
+    suseconds_t last_render;
+#endif
 } ui_surface_t;
 
 typedef enum {
@@ -50,7 +55,11 @@ typedef enum {
     UI_WIDE                 = 1024, // Wide character
 } ui_cell_flags_t;
 
-void render_surface(int fd, ui_surface_t *surface);
+void render_surface_naive(int fd, ui_surface_t *surface);
+void render_surface_opt(int fd, ui_surface_t *surface);
 void render_fdsets_cells(ui_surface_t *surface, session_t *s);
+
+// default renderer
+#define render_surface render_surface_opt
 
 #define CELL_AT(surface, row, column) ((surface)->cells + (row) * (surface)->width + (column))
