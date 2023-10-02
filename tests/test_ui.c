@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-
+#include <sys/time.h>
 #include "nervcenter.h"
 #include "ui.h"
 #include "magi_ui.h"
@@ -59,12 +59,10 @@ void runtest(session_t *s,
 }
 
 int main(int argc, char **argv) {
-#ifdef CHALDEBUG
     size_t total_bytes_naive = 0;
     suseconds_t total_time_naive = 0;
     size_t total_bytes_opt = 0;
     suseconds_t total_time_opt = 0;
-#endif
     session_t s;
     if (argc < 2) {
         s.maxfds = 1024+64-ROUNDS;
@@ -74,8 +72,15 @@ int main(int argc, char **argv) {
     }
     s.nfds = 0;
     pthread_mutex_init(&s.sensor_lock, NULL);
+    // time the two renderers
+    struct timeval nstart, nend;
+    gettimeofday(&nstart, NULL);
     runtest(&s, 1, &magi_ui, 0, &total_bytes_naive, &total_time_naive);
+    gettimeofday(&nend, NULL);
+    struct timeval ostart, oend;
+    gettimeofday(&ostart, NULL);
     runtest(&s, 1, &magi_ui, 1, &total_bytes_opt, &total_time_opt);
+    gettimeofday(&oend, NULL);
 #ifdef CHALDEBUG
     printf("Naive renderer:\n");
     printf("  Total bytes written: %zu\n", total_bytes_naive);
@@ -90,5 +95,10 @@ int main(int argc, char **argv) {
     printf("Speedup: %.2fx\n", (float)total_time_naive / (float)total_time_opt);
     printf("Bytes saved: %zu\n", total_bytes_naive - total_bytes_opt);
 #endif
+    suseconds_t nelapsed = (nend.tv_sec - nstart.tv_sec) * 1000000 + (nend.tv_usec - nstart.tv_usec);
+    suseconds_t oelapsed = (oend.tv_sec - ostart.tv_sec) * 1000000 + (oend.tv_usec - ostart.tv_usec);
+    printf("Naive renderer:     %8ld us\n", nelapsed);
+    printf("Optimized renderer: %8ld us\n", oelapsed);
+    printf("Speedup:            %8.2f x\n", (float)nelapsed / (float)oelapsed);
     return 0;
 }

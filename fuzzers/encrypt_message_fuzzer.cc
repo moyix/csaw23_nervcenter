@@ -30,5 +30,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     free(message);
     free(ciphertext);
     assert (res == 0 || res == 1);
+    (void)res;
     return 0;
 }

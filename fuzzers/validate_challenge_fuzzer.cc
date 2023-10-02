@@ -23,5 +23,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     rsa_error_t res = validate_challenge(&sess, challenge, 32, response, rb);
     free(response);
     assert (res != RERR_OK);
+    (void)res;
     return 0;
 }

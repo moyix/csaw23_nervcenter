@@ -133,6 +133,8 @@ void render_cell_style(int fd, ui_cell_t *cell) {
         n = dprintf(fd, ANSI_RESET);
 #ifdef CHALDEBUG
         if (n > 0) magi_ui.bytes_written += n;
+#else
+        (void)n;
 #endif
     }
     if (cell->flags & UI_STYLE_BOLD) {
@@ -210,6 +212,8 @@ void render_cell(int fd, ui_cell_t *cell) {
     n = write(fd, cell->bytes, cell->len);
 #ifdef CHALDEBUG
     if (n > 0) magi_ui.bytes_written += n;
+#else
+    (void)n;
 #endif
 }
 
@@ -224,6 +228,8 @@ void render_surface_naive(int fd, ui_surface_t *surface) {
         int n = dprintf(fd, ANSI_RESET);
 #ifdef CHALDEBUG
         if (n > 0) magi_ui.bytes_written += n;
+#else
+        (void)n;
 #endif
     }
 #ifdef CHALDEBUG
@@ -261,6 +267,8 @@ void render_surface_opt(int fd, ui_surface_t *surface) {
         n = write(fd, cell->bytes, cell->len);
 #ifdef CHALDEBUG
         if (n > 0) magi_ui.bytes_written += n;
+#else
+        (void)n;
 #endif
         prev = cell;
     }
