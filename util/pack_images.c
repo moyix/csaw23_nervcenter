@@ -12,6 +12,10 @@ int packcb(const char *path, uint64_t bytes_in, uint64_t bytes_out, resource_cb_
             printf("Skipping %s\n", path);
             return 0;
         }
+        else if (!strstr(path, ".txt")) {
+            printf("Skipping %s\n", path);
+            return 0;
+        }
         else {
             return 1;
         }

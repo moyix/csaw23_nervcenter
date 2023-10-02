@@ -162,7 +162,10 @@ int unpack_blob(const char *path, const unsigned char *blob, size_t blob_size, s
     char fullpath[4096];
 
     while (offset < blob_size) {
-        resource_header *header = (resource_header *)(blob + offset);
+        resource_header local_header;
+        memcpy(&local_header, blob + offset, sizeof(local_header));
+        resource_header *header = &local_header;
+
         offset += sizeof(resource_header);
 
         snprintf(fullpath, sizeof(fullpath), "%s/%s", path, header->name);
@@ -306,7 +309,10 @@ int unpack_blob_to_table(const unsigned char *blob, size_t blob_size, resource_t
     char fullpath[4096];
 
     while (offset < blob_size) {
-        resource_header *header = (resource_header *)(blob + offset);
+        resource_header local_header;
+        memcpy(&local_header, blob + offset, sizeof(local_header));
+        resource_header *header = &local_header;
+
         offset += sizeof(resource_header);
 
         snprintf(fullpath, sizeof(fullpath), "%s", header->name);

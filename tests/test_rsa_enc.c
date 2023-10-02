@@ -62,5 +62,12 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Free memory
+    RSA_free(rsa_pub);
+    RSA_free(rsa_priv);
+    BN_free(e);
+    free(ciphertext);
+    free(plaintext);
+
     return 0;
 }

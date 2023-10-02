@@ -45,6 +45,9 @@ endif()
 # Set the modified list back
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS ${current_build_types})
 
+# Use it to populate the configuration types
+set(CMAKE_CONFIGURATION_TYPES "${current_build_types}" CACHE STRING "" FORCE)
+
 # Set the C standard
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -199,3 +202,6 @@ add_custom_target(coverage_report
 )
 
 endif()
+
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Configuration types: ${CMAKE_CONFIGURATION_TYPES}")

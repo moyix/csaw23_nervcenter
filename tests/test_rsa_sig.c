@@ -70,5 +70,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "[-] Validation failed: %d\n", validate_res);
         return 1;
     }
+
+    // Free memory
+    RSA_free(rsa_pub);
+    RSA_free(rsa_priv);
+    BN_free(e);
+    free(sig);
+
     return 0;
 }
