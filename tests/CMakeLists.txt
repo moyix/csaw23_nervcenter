@@ -20,3 +20,8 @@ add_test_program(test_rsa_validate_key "../src/rsautil.c;../src/base64.c" "${OPE
 add_test_program(test_ui "../src/ui.c;${MAGI_UI_C}" "${GENERATED_DIR}" "")
 add_test_program(test_base64 "../src/base64.c" "" "")
 add_test_program(test_sendimgvid "../src/utils.c;../src/image.c;../src/resources.c;${IMGRESOURCE_C}" "${GENERATED_DIR};${ZLIB_INCLUDE_DIRS}" "${ZLIB_LIBRARIES}")
+
+add_test(NAME test_server_basics
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_server_basics.py ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)

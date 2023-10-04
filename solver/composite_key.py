@@ -56,7 +56,7 @@ def rootpath():
     return Path(__file__).parent.absolute()
 
 def solverbins():
-    return rootpath() / "../build/solver"
+    return rootpath() / "../build_Debug/solver"
 
 def terminate_proc_tree(pid, including_parent=False):
     parent = psutil.Process(pid)

@@ -50,7 +50,6 @@ int angel_list_len = 17;
 // Signal handler for several signals, which just calls exit() so we can get leak info
 void sig_handler(int signum) {
     write(1, "Exiting due to signal\n", 22);
-    write(1, "Signal: ", 8);
     exit(0);
 }
 
