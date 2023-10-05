@@ -18,7 +18,9 @@ typedef struct {
     int nfds;
     pthread_mutex_t sensor_lock;
     fd_set readfds;
+    long pad1;
     fd_set writefds;
+    long pad2;
     fd_set exceptfds;
     unsigned char pubkey[RSA_KEY_SIZE/8];
 } session_t;

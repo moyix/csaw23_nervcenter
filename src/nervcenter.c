@@ -248,10 +248,6 @@ void *sensor_thread(void *arg) {
         tv.tv_usec = 1000; // 1ms
         int activity = select(sess->nfds + 1, &sess->readfds, &sess->writefds, &sess->exceptfds, &tv);
         pthread_mutex_unlock(&sess->sensor_lock);
-        // if we timed out, just go back to the top of the loop after checking if we should exit
-        if (activity == 0) {
-            goto exit_check;
-        }
 
         // Does the control thread want us to pause?
         int did_pause = 0;
@@ -263,6 +259,11 @@ void *sensor_thread(void *arg) {
         }
         pthread_mutex_unlock(&args->pause_mutex);
         if (did_pause) printf("[+] Sensor thread resuming\n");
+
+        // if we timed out, just go back to the top of the loop after checking if we should exit
+        if (activity == 0) {
+            goto exit_check;
+        }
 
         // If the activity is on the server socket it means we have a new connection
         // Accept it
