@@ -182,6 +182,10 @@ void update_cell(ui_cell_t *cell, ui_cell_t *other) {
         cell->flags = other->flags;
 }
 
+void overwrite_cell(ui_cell_t *cell, ui_cell_t *other) {
+    memcpy(cell, other, sizeof(ui_cell_t));
+}
+
 void render_fdline_cells(ui_surface_t *surface, int row, int col, int i, fd_set *s, int nfds) {
     // unicode block elements to represent 0..15:
     // ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█'
@@ -258,7 +262,7 @@ void render_fdset_cells(ui_surface_t *surface, int row, int col, fd_set *s, int 
 void blit_surface(ui_surface_t *dst, ui_surface_t *src, int dst_row, int dst_col) {
     for (int i = 0; i < src->height; i++) {
         for (int j = 0; j < src->width; j++) {
-            update_cell(CELL_AT(dst, dst_row+i, dst_col+j), CELL_AT(src, i, j));
+            overwrite_cell(CELL_AT(dst, dst_row+i, dst_col+j), CELL_AT(src, i, j));
         }
     }
 }
