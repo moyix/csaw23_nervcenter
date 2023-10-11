@@ -35,7 +35,7 @@
 #include "utils.h"
 
 // Small delay when sending images to let them scroll by
-#define IMG_DELAY 15000
+#define IMG_DELAY 30000
 
 // Lock for getting the sensor port
 pthread_mutex_t sensor_port_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -439,7 +439,8 @@ int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
     dprintf(s, "3. Issue sensor system halt\n");
     dprintf(s, "4. Resume sensor operations\n");
     dprintf(s, "5. MAGI status\n");
-    dprintf(s, "6. Exit\n");
+    dprintf(s, "6. Help\n");
+    dprintf(s, "7. Exit\n");
     dprintf(s, "Enter your choice: ");
     char *pubkey;
     char buffer[BUFFER_SIZE+1] = {0};
@@ -491,6 +492,9 @@ int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
             break;
         }
         case 6:
+            sendimg(s, "./documentation.txt", IMG_DELAY);
+            break;
+        case 7:
             dprintf(s, "Goodbye!\n");
             return 0;
 #ifdef CHALDEBUG

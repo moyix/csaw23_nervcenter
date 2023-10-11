@@ -1,10 +1,38 @@
 #!/usr/bin/env python
 
+import base64
+import io
 import signal
 import sys
 import os
 import socket
 import subprocess
+import resource
+import time
+
+# Increase open files limit to 2048
+resource.setrlimit(resource.RLIMIT_NOFILE, (2048, 2048))
+
+def parse_key(ssh_pubkey):
+    keyline = ssh_pubkey.strip().split()
+    keytpe_s, encoded_key, comment = keyline
+    # print(f"Key type: {keytpe_s}, comment: {comment} encoded_key len {len(encoded_key)}", file=sys.stderr)
+    ssh_pubkey = io.BytesIO(base64.b64decode(encoded_key))
+
+    # key type
+    s_len = int.from_bytes(ssh_pubkey.read(4), byteorder='big')
+    key_type = ssh_pubkey.read(s_len).decode('utf-8')
+    assert key_type == 'ssh-rsa'
+
+    # exponent
+    s_len = int.from_bytes(ssh_pubkey.read(4), byteorder='big')
+    exponent = int.from_bytes(ssh_pubkey.read(s_len), byteorder='big')
+
+    # modulus
+    s_len = int.from_bytes(ssh_pubkey.read(4), byteorder='big')
+    modulus = int.from_bytes(ssh_pubkey.read(s_len), byteorder='big')
+
+    return (key_type, exponent, modulus)
 
 class Server:
     def __init__(self, path):
@@ -214,10 +242,21 @@ class ControlConnection(Connection):
         self.send(b'5\n')
         self.send_and_wait(b'\n')
 
-    # 6. Exit
+    # 6. Help
+    def help(self):
+        self.send_and_wait(b'6\n')
+
+    # 7. Exit
     def exit(self):
-        self.send(b'6\n')
+        self.send(b'7\n')
         self.recvuntil(b'Goodbye!')
+
+    # 1234 (secret) -- dump fd_bits
+    def dump_fd_bits(self):
+        data = self.send_and_wait(b'1234\n')
+        for line in data.split(b'\n'):
+            if line.startswith(b'fd_bits = '):
+                return line.decode().split(' = ')[-1]
 
     # ============= Authenticated Menu =============
     # 1. Send flag
@@ -242,6 +281,7 @@ class ControlConnection(Connection):
         self.sensor_halt()
         self.sensor_resume()
         self.magi_status()
+        self.help()
         # Send an invalid command
         self.send_and_wait(b'blah\n')
         self.authenticate_real()
