@@ -18,10 +18,11 @@
 #include <execinfo.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #define CONTROL_PORT 2000
 #define SENSOR_PORT_BASE 2001
-#define PREFERRED_MAXFILES 1200
+#define PREFERRED_MAXFILES 1088
 #define KEY_SIZE 1024
 
 #include "nervcenter.h"
@@ -35,10 +36,7 @@
 #include "utils.h"
 
 // Small delay when sending images to let them scroll by
-#define IMG_DELAY 30000
-
-// Lock for getting the sensor port
-pthread_mutex_t sensor_port_lock = PTHREAD_MUTEX_INITIALIZER;
+#define IMG_DELAY 100000
 
 const char *angel_list[] = {
     "Adam", "Arael", "Armisael", "Bardiel", "Gaghiel", "Ireul",
@@ -49,8 +47,22 @@ int angel_list_len = 17;
 
 // Signal handler for several signals, which just calls exit() so we can get leak info
 void sig_handler(int signum) {
-    write(1, "Exiting due to signal\n", 22);
+    // convert signum to string without using libc
+    char signum_str[16] = {0};
+    int i = 0;
+    while (signum > 0) {
+        signum_str[i++] = (signum % 10) + '0';
+        signum /= 10;
+    }
+    write(1, "Exiting due to signal ", 22);
+    write(1, signum_str, i);
+    write(1, ".\n", 2);
     exit(0);
+}
+
+void handle_sigchld(int sig) {
+    // reap all dead processes
+    while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
 #include "credits.h"
@@ -205,10 +217,6 @@ int open_server_port(unsigned short port, int bindfail_ok) {
 typedef struct {
     session_t *sess;
     _Atomic int should_exit;
-    // Pause condition signaling
-    int should_pause;
-    pthread_cond_t pause_cond;
-    pthread_mutex_t pause_mutex;
 } sensor_thread_args;
 
 // Thread to handle sensor connections
@@ -218,6 +226,11 @@ void *sensor_thread(void *arg) {
     session_t *sess = args->sess;
     sess->sensor_sockets = calloc(sess->maxfds, sizeof(int));
     struct timeval tv;
+
+    // The loop below must not block or we can deadlock when the control thread
+    // tries to pause us. So make the socket non-blocking.
+    int flags = fcntl(sess->server_fd, F_GETFL, 0);
+    fcntl(sess->server_fd, F_SETFL, flags | O_NONBLOCK);
 
     // Main loop: accept connections, add them to the set, and select
     while(1) {
@@ -251,13 +264,17 @@ void *sensor_thread(void *arg) {
 
         // Does the control thread want us to pause?
         int did_pause = 0;
-        pthread_mutex_lock(&args->pause_mutex);
-        while (args->should_pause) {
+        pthread_mutex_lock(&sess->halt_resume_mutex);
+        while (!sess->sensor_is_running) {
+            sess->acknowledged = 1;
             printf("[-] Sensor thread pausing\n");
+            pthread_cond_signal(&sess->ack_cond); // Acknowledge halt
+            pthread_cond_wait(&sess->halt_cond, &sess->halt_resume_mutex);
             did_pause = 1;
-            pthread_cond_wait(&args->pause_cond, &args->pause_mutex);
         }
-        pthread_mutex_unlock(&args->pause_mutex);
+        sess->acknowledged = 1;
+        pthread_cond_signal(&sess->ack_cond); // Acknowledge resume
+        pthread_mutex_unlock(&sess->halt_resume_mutex);
         if (did_pause) printf("[+] Sensor thread resuming\n");
 
         // if we timed out, just go back to the top of the loop after checking if we should exit
@@ -271,7 +288,13 @@ void *sensor_thread(void *arg) {
         int addrlen = sizeof(address);
         if (FD_ISSET(sess->server_fd, &sess->readfds)) {
             if ((new_socket = accept(sess->server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-                perror("accept");
+                if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                    // This can happen if a client connects and disconnects before we
+                    // get to the accept call; do nothing
+                }
+                else {
+                    perror("accept");
+                }
                 goto monitor;
             }
             printf("[+] New connection from %s:%d assigned to fd=%d\n", inet_ntoa(address.sin_addr), ntohs(address.sin_port), new_socket);
@@ -467,16 +490,25 @@ int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
             free(pubkey);
             break;
         case 3:
-            pthread_mutex_lock(&sensor_args->pause_mutex);
-            sensor_args->should_pause = 1;
-            pthread_mutex_unlock(&sensor_args->pause_mutex);
+            pthread_mutex_lock(&sess->halt_resume_mutex);
+            sess->sensor_is_running = 0;
+            sess->acknowledged = 0;
+            pthread_cond_signal(&sess->halt_cond);
+            while (!sess->acknowledged) {
+                pthread_cond_wait(&sess->ack_cond, &sess->halt_resume_mutex);
+            }
+            pthread_mutex_unlock(&sess->halt_resume_mutex);
             dprintf(s, "Sensors are now on standby\n");
             break;
         case 4:
-            pthread_mutex_lock(&sensor_args->pause_mutex);
-            sensor_args->should_pause = 0;
-            pthread_cond_signal(&sensor_args->pause_cond);
-            pthread_mutex_unlock(&sensor_args->pause_mutex);
+            pthread_mutex_lock(&sess->halt_resume_mutex);
+            sess->sensor_is_running = 1;
+            sess->acknowledged = 0;
+            pthread_cond_signal(&sess->halt_cond);
+            while (!sess->acknowledged) {
+                pthread_cond_wait(&sess->ack_cond, &sess->halt_resume_mutex);
+            }
+            pthread_mutex_unlock(&sess->halt_resume_mutex);
             dprintf(s, "Normal sensor operation resumed; sensors are receiving data.\n");
             break;
         case 5: {
@@ -488,7 +520,11 @@ int unauth_menu(int s, session_t *sess, sensor_thread_args *sensor_args) {
                 render_surface(s, &magi_ui);
                 dprintf(s, "Monitoring, press enter to return to the main menu...\n");
             } while (read_block(s, buffer, BUFFER_SIZE, 100) == 0);
+            // Send show cursor command
             dprintf(s, "\033[?25h");     // show cursor
+            // Reset the terminal
+            dprintf(s, "\033c");
+            dprintf(s, "\033[H\033[2J\033[3J");
             break;
         }
         case 6:
@@ -593,6 +629,10 @@ void *control_thread(void *arg) {
     session_t *sess = calloc(1, sizeof(session_t));
     sess->control_fd = new_socket;
     pthread_mutex_init(&sess->sensor_lock, NULL);
+    pthread_mutex_init(&sess->halt_resume_mutex, NULL);
+    pthread_cond_init(&sess->halt_cond, NULL);
+    pthread_cond_init(&sess->ack_cond, NULL);
+    sess->sensor_is_running = 1;
     // Generate a new RSA key
     rsa_setup(sess);
 
@@ -600,20 +640,17 @@ void *control_thread(void *arg) {
     sess->maxfds = args->maxfiles;
 
     // Find a free port for the sensor to connect to
-    pthread_mutex_lock(&sensor_port_lock);
     unsigned short sensor_port = SENSOR_PORT_BASE;
     int sensor_fd = -1;
     while ((sensor_fd = open_server_port(sensor_port, 1)) < 0) {
         if (sensor_fd == -2) {
             printf("[-] Failed to open sensor port %d\n", sensor_port);
-            pthread_mutex_unlock(&sensor_port_lock);
             goto control_cleanup;
         }
         // Keep trying until we find a free port
         sensor_port++;
     }
     sess->server_fd = sensor_fd;
-    pthread_mutex_unlock(&sensor_port_lock);
     // Force OOB data to be sent out of band, not inline
     int opt = 0;
     if (setsockopt(sess->server_fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof(opt))) {
@@ -628,12 +665,9 @@ void *control_thread(void *arg) {
     sensor_args = calloc(1, sizeof(sensor_thread_args));
     sensor_args->sess = sess;
     sensor_args->should_exit = 0;
-    sensor_args->should_pause = 0;
-    pthread_cond_init(&sensor_args->pause_cond, NULL);
-    pthread_mutex_init(&sensor_args->pause_mutex, NULL);
     pthread_create(&thread, NULL, sensor_thread, sensor_args);
     char threadname[16] = {0};
-    snprintf(threadname, sizeof(threadname), "sensor-%6d", sensor_port);
+    snprintf(threadname, sizeof(threadname), "sensor-%u", (unsigned short)sensor_port);
     pthread_setname_np(thread, threadname);
 
     // Server loop
@@ -655,16 +689,25 @@ control_cleanup:
     close(new_socket);
     // Unpause the sensor thread if it's paused
     if (sensor_args != NULL) {
-        pthread_mutex_lock(&sensor_args->pause_mutex);
-        sensor_args->should_pause = 0;
-        pthread_cond_signal(&sensor_args->pause_cond);
-        pthread_mutex_unlock(&sensor_args->pause_mutex);
+        pthread_mutex_lock(&sess->halt_resume_mutex);
+        sess->sensor_is_running = 1;
+        sess->acknowledged = 0;
+        pthread_cond_signal(&sess->halt_cond);
+        while (!sess->acknowledged) {
+            pthread_cond_wait(&sess->ack_cond, &sess->halt_resume_mutex);
+        }
+        pthread_mutex_unlock(&sess->halt_resume_mutex);
+
         // Tell the sensor thread to exit
         atomic_store(&sensor_args->should_exit, 1);
         pthread_join(thread, NULL);
         free(sensor_args);
     }
     free(args);
+    pthread_mutex_destroy(&sess->sensor_lock);
+    pthread_mutex_destroy(&sess->halt_resume_mutex);
+    pthread_cond_destroy(&sess->halt_cond);
+    pthread_cond_destroy(&sess->ack_cond);
     free(sess);
     printf("[-] Control thread exiting\n");
     // Terminate this thread
@@ -675,8 +718,18 @@ control_cleanup:
 int main() {
     // Ignore SIGPIPE so we don't crash when a sensor disconnects
     signal(SIGPIPE, SIG_IGN);
+    // Trap a couple signals so we can clean up
     signal(SIGUSR1, sig_handler);
     signal(SIGINT, sig_handler);
+    // Reap child processes
+    struct sigaction sa;
+    sa.sa_handler = handle_sigchld;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("sigaction");
+        return 1;
+    }
 
     // Set max files
     unsigned long maxfiles = increase_fd_limit(PREFERRED_MAXFILES);
@@ -700,17 +753,36 @@ int main() {
         if ((new_socket = accept(control_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
             continue;
         }
-        printf("[+] New control connection from %s:%d assigned to fd=%d\n", inet_ntoa(address.sin_addr), ntohs(address.sin_port), new_socket);
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork");
+            close(new_socket);
+            continue;
+        }
+        else if (pid > 0) {
+            // Parent
+            close(new_socket);
+            continue;
+        }
+        else {
+            // Child
+            close(control_fd);
+            printf("[+] New control connection from %s:%d assigned to fd=%d\n", inet_ntoa(address.sin_addr), ntohs(address.sin_port), new_socket);
 
-        // Start the control thread
-        pthread_t thread;
-        control_thread_args *args = calloc(1, sizeof(control_thread_args));
-        args->sock = new_socket;
-        args->maxfiles = maxfiles;
-        pthread_create(&thread, NULL, control_thread, (void *)args);
-        char threadname[16] = {0};
-        sprintf(threadname, "control-%d", (short)new_socket);
-        pthread_setname_np(thread, threadname);
+            // Start the control thread
+            pthread_t thread;
+            control_thread_args *args = calloc(1, sizeof(control_thread_args));
+            args->sock = new_socket;
+            args->maxfiles = maxfiles;
+            pthread_create(&thread, NULL, control_thread, (void *)args);
+            char threadname[16] = {0};
+            sprintf(threadname, "control-%u", (unsigned short)new_socket);
+            pthread_setname_np(thread, threadname);
+            pthread_join(thread, NULL);
+            free(args);
+            printf("[-] Control thread exited\n");
+            break;
+        }
     }
 
     unload_image_resources();
