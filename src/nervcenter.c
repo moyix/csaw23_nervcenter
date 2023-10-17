@@ -408,7 +408,7 @@ int handle_auth(session_t *sess) {
     } else {
         dprintf(new_socket, "Authentication failed.\n");
         if (res == RERR_BADSIG) {
-            sendimg(new_socket, "./shinji.txt", 0);
+            sendimg(new_socket, "./asuka_pathetic.txt", 0);
             dprintf(new_socket, "Invalid signature\n");
         }
         else if (res == RERR_EVEN_KEY) {
@@ -420,7 +420,7 @@ int handle_auth(session_t *sess) {
             dprintf(new_socket, "Invalid key: too large\n");
         }
         else if (res == RERR_KEY_TOO_SMALL) {
-            sendimg(new_socket, "./asuka_pathetic.txt", 0);
+            sendimg(new_socket, "./shinji.txt", 0);
             dprintf(new_socket, "Invalid key: too small\n");
         }
         else {
