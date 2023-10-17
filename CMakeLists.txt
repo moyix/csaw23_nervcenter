@@ -152,7 +152,7 @@ add_custom_command(
 
 # This ensures the files are always generated
 add_custom_target(generate_files ALL
-    DEPENDS ${MAGI_UI_C} ${MAGI_UI_H} ${XTERM_COLORS_H}
+    DEPENDS ${IMGRESOURCE_C} ${IMGRESOURCE_H} ${MAGI_UI_C} ${MAGI_UI_H} ${XTERM_COLORS_H}
 )
 
 # Enable testing
