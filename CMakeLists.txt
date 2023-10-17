@@ -65,6 +65,9 @@ find_package(ZLIB REQUIRED)
 # libgmp for brent
 find_package(GMP REQUIRED)
 
+# strip symbols from release builds
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -s")
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Generate the paths for the generated files in the build directory
@@ -110,7 +113,7 @@ endif()
 
 # brent executable
 add_executable(brent solver/brent.c)
-target_include_directories(brent PRIVATE ${GMP_INCLUDE_DIRS})
+target_include_directories(brent PRIVATE ${GMP_INCLUDES})
 target_link_libraries(brent PRIVATE ${GMP_LIBRARIES})
 set_target_properties(brent PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/solver"
