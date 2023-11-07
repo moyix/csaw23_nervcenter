@@ -65,9 +65,6 @@ find_package(ZLIB REQUIRED)
 # libgmp for brent
 find_package(GMP REQUIRED)
 
-# strip symbols from release builds
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -s")
-
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Generate the paths for the generated files in the build directory
@@ -208,3 +205,10 @@ endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Configuration types: ${CMAKE_CONFIGURATION_TYPES}")
+
+add_custom_command(TARGET nervcenter POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} --only-keep-debug $<TARGET_FILE:nervcenter> $<TARGET_FILE_DIR:nervcenter>/$<TARGET_FILE_NAME:nervcenter>.debug
+    COMMAND ${CMAKE_OBJCOPY} --strip-debug --strip-unneeded $<TARGET_FILE:nervcenter>
+    COMMAND ${CMAKE_OBJCOPY} --add-gnu-debuglink=$<TARGET_FILE_DIR:nervcenter>/$<TARGET_FILE_NAME:nervcenter>.debug $<TARGET_FILE:nervcenter>
+    COMMENT "Creating detached debug symbols for $<TARGET_FILE:nervcenter>"
+)
