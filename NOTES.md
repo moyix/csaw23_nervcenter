@@ -76,14 +76,14 @@ Scenario is a terminal interface to the [Magi supercomputers from Evangelion](ht
 
 # TODO
 
-- Check w/ CSAW infra people to make sure this port setup is ok
-- Add administrator menu with some goodies (including flag) [MOSTLY DONE]
-- Playtest. Too hard? Too easy?
-- Fuzz, tests, everything you can think of. This thing is a LOT of C code... [IN PROGRESS]
-- Finish and test byte extension variant of the chal
+- Playtest. Too hard? Too easy? [IN PROGRESS]
 
 # Done
 
+- Finish and test byte extension variant of the chal [NOT DOING]
+- Check w/ CSAW infra people to make sure this port setup is ok [DONE]
+- Add administrator menu with some goodies (including flag) [DONE]
+- Fuzz, tests, everything you can think of. This thing is a LOT of C code... [DONE]
 - Bling up that UI [DONE]
 - Consider other functionality for client thread, like actually reading the OOB data (allows bits to be cleared instead of just set) [DONE]
 - Test the multi-bit vs the sequential solver
